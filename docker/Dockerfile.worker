@@ -1,0 +1,76 @@
+# TaskForgeWorker (C++23 + CppToolkit) — ubuntu:24.04 멀티스테이지 빌드
+# context는 저장소 루트를 기대한다: docker build -f docker/Dockerfile.worker ..
+
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        ninja-build \
+        git \
+        curl \
+        zip \
+        unzip \
+        tar \
+        pkg-config \
+        ca-certificates \
+        linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# vcpkg 부트스트랩 (baseline 커밋은 히스토리에서 해석되므로 전체 클론)
+RUN git clone https://github.com/microsoft/vcpkg /opt/vcpkg \
+    && /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+ENV VCPKG_ROOT=/opt/vcpkg
+ENV PATH=/opt/vcpkg:${PATH}
+
+# 아키텍처별 triplet 결정
+RUN arch="$(dpkg --print-architecture)" \
+    && case "${arch}" in \
+        amd64) echo "x64-linux" > /vcpkg_triplet ;; \
+        arm64) echo "arm64-linux" > /vcpkg_triplet ;; \
+        *) echo "unsupported architecture: ${arch}" >&2; exit 1 ;; \
+    esac
+
+WORKDIR /workspace
+
+# 의존성 캐시 레이어: 매니페스트만 먼저 복사해 vcpkg install을 캐시한다
+COPY vcpkg.json ./
+RUN vcpkg install --triplet "$(cat /vcpkg_triplet)"
+
+# 소스 전체 복사 후 빌드
+# -include cstring: CppToolkit 일부 소스가 GCC 13에서 memset/memcpy 선언 누락으로 실패하는 것을 보정
+COPY . .
+RUN cmake -S . -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
+        -DVCPKG_TARGET_TRIPLET="$(cat /vcpkg_triplet)" \
+        -DCMAKE_CXX_FLAGS="-include cstring" \
+        -DBUILD_SHARED_LIBS=OFF \
+    && cmake --build build -j"$(nproc)"
+
+FROM ubuntu:24.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libstdc++6 \
+        bash \
+        coreutils \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --shell /usr/sbin/nologin taskforge
+
+WORKDIR /app
+
+COPY --from=builder /workspace/build/out/TaskForgeWorker /app/TaskForgeWorker
+COPY --from=builder /workspace/build/out/tasks /app/tasks
+COPY --from=builder /workspace/build/out/task_forge_worker_configurations.json /app/task_forge_worker_configurations.json
+
+RUN mkdir -p /app/logs /app/dlq && chown -R taskforge:taskforge /app
+
+USER taskforge
+
+CMD ["/app/TaskForgeWorker", "--config_path", "/app/config/task_forge_worker_configurations.json"]

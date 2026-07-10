@@ -1,0 +1,41 @@
+{
+	"worker_title": "TaskForgeWorker",
+	"write_file_log": 4,
+	"write_console_log": 4,
+	"write_interval": 1000,
+	"log_root_path": "",
+	"high_priority_count": 1,
+	"normal_priority_count": 2,
+	"low_priority_count": 1,
+	"redis_host": "127.0.0.1",
+	"redis_port": 6379,
+	"redis_db_index": 0,
+	"redis_ttl_sec": 3600,
+	"aws_region": "us-east-1",
+	"aws_access_key": "test",
+	"aws_secret_key": "test",
+	"aws_endpoint": "http://127.0.0.1:4566",
+	"sqs_request_queue_url": "http://127.0.0.1:4566/000000000000/taskforge-jobs-request.fifo",
+	"sqs_message_group_id": "request",
+	"sqs_wait_time_seconds": 5,
+	"sqs_visibility_timeout": 60,
+	"sqs_max_number_of_messages": 1,
+	"s3_bucket": "taskforge-jobs",
+	"presign_ttl_sec": 600,
+	"dlq_path": "",
+	"dlq_max_retry_count": 3,
+	"dlq_backlog_alert_count": 10,
+	"default_timeout_sec": 30,
+	"task_whitelist": [
+		{
+			"name": "wordcount",
+			"executable": "tasks/wordcount.sh",
+			"description": "각 입력 텍스트 파일의 단어 수를 계산해 <파일명>.wordcount.txt로 출력합니다."
+		},
+		{
+			"name": "checksum",
+			"executable": "tasks/checksum.sh",
+			"description": "각 입력 파일의 SHA-256 체크섬을 계산해 <파일명>.sha256.txt로 출력합니다."
+		}
+	]
+}

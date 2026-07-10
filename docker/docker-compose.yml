@@ -1,0 +1,154 @@
+name: yirang-taskforge
+
+services:
+  localstack:
+    image: localstack/localstack:3
+    container_name: taskforge-localstack
+    environment:
+      - SERVICES=s3,sqs
+      - AWS_DEFAULT_REGION=us-east-1
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./localstack-init:/etc/localstack/init/ready.d:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - taskforge-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: taskforge-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - taskforge-network
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    image: taskforge-worker:latest
+    container_name: taskforge-worker
+    environment:
+      # aws-sdk-cpp 기본 자격증명 체인용 (LocalStack 더미 자격증명)
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - ./config:/app/config:ro
+    depends_on:
+      localstack:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "TaskForgeWorker"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - taskforge-network
+
+  api-go:
+    build:
+      context: ../Interface/golang
+    image: taskforge-api-go:latest
+    container_name: taskforge-api-go
+    environment:
+      - HTTP_ADDR=:8080
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - S3_BUCKET=taskforge-jobs
+      - SQS_REQUEST_QUEUE_URL=http://localstack:4566/000000000000/taskforge-jobs-request.fifo
+      - REDIS_ADDR=redis:6379
+    ports:
+      - "8080:8080"
+    depends_on:
+      localstack:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - taskforge-network
+
+  api-python:
+    build:
+      context: ../Interface/python
+    image: taskforge-api-python:latest
+    container_name: taskforge-api-python
+    environment:
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - S3_BUCKET=taskforge-jobs
+      - S3_PRESIGN_TTL_SEC=600
+      - SQS_REQUEST_QUEUE_URL=http://localstack:4566/000000000000/taskforge-jobs-request.fifo
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      localstack:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - taskforge-network
+
+  api-js:
+    build:
+      context: ../Interface/js
+    image: taskforge-api-js:latest
+    container_name: taskforge-api-js
+    environment:
+      - HTTP_PORT=8082
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - S3_BUCKET=taskforge-jobs
+      - S3_PRESIGN_TTL_SEC=600
+      - SQS_REQUEST_QUEUE_URL=http://localstack:4566/000000000000/taskforge-jobs-request.fifo
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8082:8082"
+    depends_on:
+      localstack:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8082/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - taskforge-network
+
+networks:
+  taskforge-network:
+    driver: bridge

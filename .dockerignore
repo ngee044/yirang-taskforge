@@ -1,0 +1,14 @@
+build/
+vcpkg_installed/
+.git/
+.gitmodules
+Interface/js/node_modules/
+Interface/js/dist/
+Interface/python/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+logs/
+*.log
+docs/
+.claude/
