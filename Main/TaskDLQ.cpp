@@ -4,6 +4,7 @@
 
 #include <boost/json.hpp>
 
+#include <algorithm>
 #include <format>
 #include <fstream>
 #include <sstream>
@@ -20,12 +21,12 @@ TaskDLQ::TaskDLQ(const std::string& dlq_path, int max_retry_count) : dlq_path_(d
 	}
 }
 
-auto TaskDLQ::record_failure(const std::string& job_id, const std::string& request_message, const std::string& failure_reason)
+auto TaskDLQ::record_failure(const std::string& job_id, const std::string& request_message, const std::string& failure_reason, int inbound_try_count)
 	-> std::expected<int, std::string>
 {
 	auto path = entry_path(job_id);
 
-	int try_count = 0;
+	int try_count = inbound_try_count > 0 ? inbound_try_count : 0;
 	if (std::filesystem::exists(path))
 	{
 		std::ifstream existing(path);
@@ -39,7 +40,7 @@ auto TaskDLQ::record_failure(const std::string& job_id, const std::string& reque
 				auto parsed = boost::json::parse(buffer.str());
 				if (parsed.is_object() && parsed.as_object().contains("try_count") && parsed.as_object().at("try_count").is_int64())
 				{
-					try_count = (int)parsed.as_object().at("try_count").as_int64();
+					try_count = std::max(try_count, (int)parsed.as_object().at("try_count").as_int64());
 				}
 			}
 			catch (const std::exception&)

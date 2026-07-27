@@ -380,11 +380,17 @@ auto TaskForgeWorker::handle_message(const std::string& message_body) -> std::ex
 	{
 		Logger::handle().write(LogTypes::Error, std::format("invalid message (dropped): {}", validated.error()));
 
+		// 형식이 유효한 job_id에만 failed를 기록한다. 미검증 값을 Redis 키로 쓰면
+		// 조회 불가능한 쓰레기 키가 남고 경로 문자가 하위 계층으로 전파된다
 		if (message.contains("job_id") && message.at("job_id").is_string())
 		{
-			boost::json::object updates;
-			updates["failure_reason"] = validated.error();
-			set_job_status(message.at("job_id").as_string().c_str(), "failed", updates);
+			const auto& job_id = message.at("job_id").as_string();
+			if (MessageValidation::is_valid_job_id(std::string_view(job_id.data(), job_id.size())))
+			{
+				boost::json::object updates;
+				updates["failure_reason"] = validated.error();
+				set_job_status(job_id.c_str(), "failed", updates);
+			}
 		}
 
 		return {};
@@ -558,7 +564,26 @@ auto TaskForgeWorker::upload_outputs(const std::string& output_prefix, const std
 
 auto TaskForgeWorker::handle_processing_failure(const std::string& job_id, const std::string& message_body, const std::string& reason) -> void
 {
-	auto recorded = task_dlq_->record_failure(job_id, message_body, reason);
+	boost::json::object republish;
+	try
+	{
+		republish = boost::json::parse(message_body).as_object();
+	}
+	catch (const std::exception&)
+	{
+		republish["job_id"] = job_id;
+	}
+
+	// 재시도 횟수의 SSOT는 메시지의 dlq_try_count입니다. 이 값을 판독하지 않으면
+	// 로컬 DLQ 파일이 소실된 인스턴스에서 카운트가 리셋되고, 이미 사용한 dedup ID를
+	// 재사용해 재시도 메시지가 조용히 폐기됩니다(작업이 비터미널 상태로 고착)
+	int inbound_try_count = 0;
+	if (republish.contains("dlq_try_count") && republish.at("dlq_try_count").is_int64())
+	{
+		inbound_try_count = (int)republish.at("dlq_try_count").as_int64();
+	}
+
+	auto recorded = task_dlq_->record_failure(job_id, message_body, reason, inbound_try_count);
 	if (!recorded)
 	{
 		Logger::handle().write(LogTypes::Error, std::format("cannot record dlq entry [{}]: {}", job_id, recorded.error()));
@@ -585,15 +610,6 @@ auto TaskForgeWorker::handle_processing_failure(const std::string& job_id, const
 		return;
 	}
 
-	boost::json::object republish;
-	try
-	{
-		republish = boost::json::parse(message_body).as_object();
-	}
-	catch (const std::exception&)
-	{
-		republish["job_id"] = job_id;
-	}
 	republish["dlq_try_count"] = try_count;
 
 	auto republished = sqs_publisher_->send_message(Aws::String(boost::json::serialize(republish).c_str()),

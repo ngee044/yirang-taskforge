@@ -1,12 +1,37 @@
 #include "MessageValidation.h"
 
+#include <algorithm>
 #include <format>
+
+namespace
+{
+	constexpr size_t job_id_max_length = 64;
+}
+
+auto MessageValidation::is_valid_job_id(std::string_view job_id) -> bool
+{
+	if (job_id.empty() || job_id.size() > job_id_max_length)
+	{
+		return false;
+	}
+
+	return std::all_of(job_id.begin(), job_id.end(), [](char character) {
+		return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9')
+			   || character == '-' || character == '_';
+	});
+}
 
 auto MessageValidation::validate_request(const boost::json::object& message) -> std::expected<void, std::string>
 {
 	if (!message.contains("job_id") || !message.at("job_id").is_string() || message.at("job_id").as_string().empty())
 	{
 		return std::unexpected("job_id is required and must be a non-empty string");
+	}
+
+	const auto& job_id = message.at("job_id").as_string();
+	if (!is_valid_job_id(std::string_view(job_id.data(), job_id.size())))
+	{
+		return std::unexpected(std::format("job_id must match [A-Za-z0-9_-]{{1,{}}}", job_id_max_length));
 	}
 
 	if (!message.contains("mode") || !message.at("mode").is_string())
