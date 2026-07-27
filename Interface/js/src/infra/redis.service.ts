@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
 import { AppConfig } from '../config/configuration';
+import { REDIS_COMMAND_TIMEOUT_MS } from './timeouts';
 
 // Redis 상태 조회/기록 어댑터.
 @Injectable()
@@ -17,6 +18,9 @@ export class RedisService implements OnModuleDestroy {
       db: config.get('redisDb', { infer: true }),
       ...(password ? { password } : {}),
       connectTimeout: 2000,
+      // connectTimeout은 TCP 수립에만 적용된다. 연결은 되지만 응답하지 않는 서버에는
+      // commandTimeout이 없으면 명령이 무기한 대기한다
+      commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
       maxRetriesPerRequest: 2,
       lazyConnect: true,
     });

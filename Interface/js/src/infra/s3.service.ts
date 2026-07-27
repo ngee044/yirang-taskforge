@@ -2,8 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 
 import { AppConfig } from '../config/configuration';
+import {
+  AWS_CONNECTION_TIMEOUT_MS,
+  AWS_OPERATION_TIMEOUT_MS,
+  AWS_REQUEST_TIMEOUT_MS,
+} from './timeouts';
 
 // S3 presign 어댑터. 도메인 계층에 AWS SDK 타입이 누출되지 않게 한다.
 @Injectable()
@@ -22,6 +28,12 @@ export class S3Service {
       // 기본값(WHEN_SUPPORTED)은 presigned PUT URL에 빈 본문 기준 x-amz-checksum-crc32를
       // 서명에 포함시켜 실제 파일 업로드가 체크섬 불일치로 실패한다
       requestChecksumCalculation: 'WHEN_REQUIRED',
+      // SDK 기본값은 무제한 대기이므로 명시한다 (presign은 로컬 계산이라 영향 없음, ping/HeadBucket에 적용)
+      requestHandler: new NodeHttpHandler({
+        connectionTimeout: AWS_CONNECTION_TIMEOUT_MS,
+        requestTimeout: AWS_REQUEST_TIMEOUT_MS,
+        throwOnRequestTimeout: true,
+      }),
       ...(endpoint
         ? {
             endpoint,
@@ -43,6 +55,8 @@ export class S3Service {
   }
 
   async ping(): Promise<void> {
-    await this.client.send(new HeadBucketCommand({ Bucket: this.bucketName }));
+    await this.client.send(new HeadBucketCommand({ Bucket: this.bucketName }), {
+      abortSignal: AbortSignal.timeout(AWS_OPERATION_TIMEOUT_MS),
+    });
   }
 }

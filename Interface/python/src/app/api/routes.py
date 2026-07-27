@@ -67,11 +67,13 @@ async def readyz(request: Request):
     state = request.app.state
     await check("redis", state.redis_repo.ping)
 
+    # abandon_on_cancel=False(기본값)면 anyio가 스레드 완료까지 취소를 차단하므로
+    # 위 fail_after(3)가 boto3 호출이 스스로 끝난 뒤에야 적용된다 (계약 A-4의 3초 상한 무효화)
     async def sqs_ping() -> None:
-        await anyio.to_thread.run_sync(state.sqs_repo.ping)
+        await anyio.to_thread.run_sync(state.sqs_repo.ping, abandon_on_cancel=True)
 
     async def s3_ping() -> None:
-        await anyio.to_thread.run_sync(state.s3_repo.ping)
+        await anyio.to_thread.run_sync(state.s3_repo.ping, abandon_on_cancel=True)
 
     await check("sqs", sqs_ping)
     await check("s3", s3_ping)

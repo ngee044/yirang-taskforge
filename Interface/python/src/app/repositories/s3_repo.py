@@ -17,7 +17,8 @@ class S3Repository:
             "s3",
             region_name=region,
             endpoint_url=endpoint_url or None,
-            config=BotoConfig(s3=addressing, connect_timeout=3, read_timeout=5, retries={"max_attempts": 2}),
+            # 총 시도 횟수를 직접 고정해 최악 응답 시간을 유계화한다 (sqs_repo와 동일 근거)
+            config=BotoConfig(s3=addressing, connect_timeout=2, read_timeout=2, retries={"total_max_attempts": 2}),
         )
 
     @property

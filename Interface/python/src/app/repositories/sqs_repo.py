@@ -13,7 +13,9 @@ class SQSRepository:
             "sqs",
             region_name=region,
             endpoint_url=endpoint_url or None,
-            config=BotoConfig(connect_timeout=3, read_timeout=5, retries={"max_attempts": 2}),
+            # max_attempts는 botocore에서 "재시도 횟수"로 해석되어 총 시도가 1회 늘어난다.
+            # 총 시도 횟수를 직접 고정해 최악 응답 시간을 약 8초(2회 × (연결 2초 + 응답 2초))로 유계화한다.
+            config=BotoConfig(connect_timeout=2, read_timeout=2, retries={"total_max_attempts": 2}),
         )
 
     def enqueue(self, body: str, message_group_id: str) -> None:
