@@ -17,8 +17,17 @@ class S3Repository:
             "s3",
             region_name=region,
             endpoint_url=endpoint_url or None,
+            # signature_version을 명시하지 않으면 botocore가 us-east-1 등 legacy 리전에서
+            # presign 서명기를 SigV2로 되돌린다(_default_s3_presign_to_sigv2). AWS는 2020-06-24 이후
+            # 생성된 버킷에서 SigV2를 지원하지 않으므로 SigV4를 강제한다 (FR-JOB-02, NFR-PORT-01)
             # 총 시도 횟수를 직접 고정해 최악 응답 시간을 유계화한다 (sqs_repo와 동일 근거)
-            config=BotoConfig(s3=addressing, connect_timeout=2, read_timeout=2, retries={"total_max_attempts": 2}),
+            config=BotoConfig(
+                s3=addressing,
+                signature_version="s3v4",
+                connect_timeout=2,
+                read_timeout=2,
+                retries={"total_max_attempts": 2},
+            ),
         )
 
     @property

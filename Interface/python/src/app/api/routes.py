@@ -17,6 +17,9 @@ router = APIRouter()
 
 _started_at = time.monotonic()
 
+# 계약 A-1이 규정한 UUID 형식
+_JOB_ID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
 
 def _service(request: Request):
     return request.app.state.job_service
@@ -29,7 +32,13 @@ async def create_job(request: Request, body: CreateJobRequest):
 
 
 @router.get("/api/v1/jobs/{job_id}")
-async def get_job(request: Request, job_id: Annotated[str, Path(min_length=1, max_length=64)]):
+async def get_job(
+    request: Request,
+    # 상태 문서의 Redis 키가 job_id이므로 형식을 검증하지 않으면 task_catalog 등
+    # 임의 키를 job 문서로 조회할 수 있다. 문자 클래스 검증으로는 task_catalog가 통과하므로
+    # UUID 형식을 요구한다 (계약 A-2)
+    job_id: Annotated[str, Path(pattern=_JOB_ID_PATTERN)],
+):
     document = await _service(request).get_job(job_id)
     return success(document)
 

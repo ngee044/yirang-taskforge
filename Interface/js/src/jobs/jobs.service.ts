@@ -102,6 +102,12 @@ export class JobsService {
   }
 
   async getJob(jobId: string): Promise<unknown> {
+    // 상태 문서의 Redis 키가 job_id이므로 형식을 검증하지 않으면 task_catalog 등
+    // 임의 키를 job 문서로 조회할 수 있다 (계약 A-2)
+    if (!isJobId(jobId)) {
+      throw new JobNotFoundError(jobId);
+    }
+
     const value = await this.redis.get(jobId);
     if (value === null) {
       throw new JobNotFoundError(jobId);
@@ -116,6 +122,14 @@ export class JobsService {
     }
     return JSON.parse(value) as unknown;
   }
+}
+
+// 계약 A-1이 규정한 UUID 형식. 문자 클래스 검증으로는 task_catalog 같은 비-job 키가
+// 통과하므로(같은 Redis 키스페이스를 공유) UUID 형식을 요구한다
+const JOB_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isJobId(value: string): boolean {
+  return JOB_ID_PATTERN.test(value);
 }
 
 function utcNow(): string {

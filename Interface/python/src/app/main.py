@@ -6,6 +6,8 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.envelope import failure
 from app.api.routes import router
@@ -49,6 +51,28 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="yirang-taskforge interface (python)", lifespan=lifespan)
     app.include_router(router)
+
+    # 요청 검증 실패는 FastAPI 기본 {"detail": [...]} 대신 계약 A 공통 envelope로 응답한다.
+    # 상태코드 422는 계약 A-1이 Python 구현에 허용한 값이므로 유지하고, error.code만 정합화한다
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(_: Request, exc: RequestValidationError):
+        code = "invalid_request"
+        message = "invalid request"
+        for error in exc.errors():
+            location = error.get("loc", ())
+            if "filename" in location:
+                code = "invalid_filename"
+                message = "input_files[].filename is invalid"
+                break
+
+        return failure(code, message, status_code=422)
+
+    # 라우팅·메서드 오류(404/405)도 envelope를 유지한다
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(_: Request, exc: StarletteHTTPException):
+        code = "not_found" if exc.status_code == 404 else "http_error"
+
+        return failure(code, str(exc.detail), status_code=exc.status_code)
 
     # 도메인 예외 → HTTP 변환은 이 경계에서만 수행한다
     @app.exception_handler(JobNotFoundError)

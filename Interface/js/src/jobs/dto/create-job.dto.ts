@@ -16,7 +16,9 @@ import {
 export class InputFileDto {
   @IsString()
   @Length(1, 255)
-  @Matches(/^(?!.*\.\.)[^/\\]+$/, { message: 'filename must not contain path separators' })
+  // s 플래그가 없으면 `.`이 개행 계열 문자(U+000A/000D/2028/2029)에 매칭되지 않아
+  // "a\n.." 처럼 개행 뒤에 오는 `..`가 선행 부정 탐색을 통과한다
+  @Matches(/^(?!.*\.\.)[^/\\]+$/s, { message: 'filename must not contain path separators' })
   filename!: string;
 }
 
