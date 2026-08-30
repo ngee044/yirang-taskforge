@@ -10,11 +10,7 @@ Request-driven job orchestration platform — 요청을 큐에 넣고, 분산 �
 flowchart LR
     Client([Client])
 
-    subgraph Interface["Interface — 동일 REST 계약 3구현"]
-        GO["Go / Gin<br/>:8080"]
-        PY["Python / FastAPI<br/>:8081"]
-        JS["Node.js / NestJS<br/>:8082"]
-    end
+    Interface["Interface<br/>REST API"]
 
     subgraph AWS["AWS (LocalStack)"]
         SQS[["SQS FIFO<br/>taskforge-jobs-request.fifo"]]
@@ -46,7 +42,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant C as Client
-    participant API as Interface (Go|Py|JS)
+    participant API as Interface (REST API)
     participant S3 as S3
     participant Q as SQS FIFO
     participant R as Redis

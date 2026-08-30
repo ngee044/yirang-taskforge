@@ -1,0 +1,95 @@
+# YTF-STP-001 §1의 언어 게이트를 PR마다 자동 실행한다.
+# 수동 1회 실행에 의존한 결과 build.sh가 2주간 깨진 채 방치된 것이 도입 근거다
+# (YTF-VER-001 VER-M-21).
+name: gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  go:
+    name: Go (Interface/golang)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: Interface/golang
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: Interface/golang/go.mod
+          cache-dependency-path: Interface/golang/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./... -race -count=1
+
+  python:
+    name: Python (Interface/python)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: Interface/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e '.[dev]'
+      - run: ruff check .
+      - run: pytest -q
+
+  js:
+    name: JS (Interface/js)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: Interface/js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: Interface/js/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint
+      - run: npm test
+
+  worker:
+    name: C++ worker (Main)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      # 워커는 Ubuntu 24.04 이미지로 빌드된다(CON-04). Dockerfile 경로가 곧 게이트이므로
+      # 호스트 vcpkg 재현 대신 실제 배포 이미지 빌드로 컴파일을 검증한다
+      - name: docker build (worker image)
+        run: docker build -f docker/Dockerfile.worker -t taskforge-worker:ci .
+
+  compose:
+    name: Compose build + E2E
+    runs-on: ubuntu-24.04
+    needs: [go, python, js, worker]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: docker compose build
+        run: docker compose -f docker/docker-compose.yml build
+      - name: stack up
+        run: docker compose -f docker/docker-compose.yml up -d
+      - name: e2e
+        run: bash docker/scripts/e2e_test.sh
+      - name: worker logs on failure
+        if: failure()
+        run: docker compose -f docker/docker-compose.yml logs --tail 200
+      - name: stack down
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down -v

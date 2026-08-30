@@ -3,6 +3,7 @@
 #include "ArgumentParser.h"
 #include "LogTypes.h"
 
+#include <expected>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,10 @@ class Configurations
 {
 public:
 	Configurations(const Utilities::ArgumentParser& arguments);
+
+	// 필수 설정이 비어 있으면 기동을 실패시킨다. 기본값으로 조용히 기동하면
+	// 큐를 소비하지 않는 워커가 healthy로 보고되어 장애가 은폐된다 (NFR-DEP-02)
+	auto validate_required(void) const -> std::expected<void, std::string>;
 
 	auto root_path(void) const -> std::string;
 	auto worker_title(void) const -> std::string;

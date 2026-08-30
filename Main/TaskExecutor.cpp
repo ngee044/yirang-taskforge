@@ -159,5 +159,22 @@ auto TaskExecutor::read_stdout_tail(const std::filesystem::path& stdout_path) co
 	std::string tail(read_size, '\0');
 	input.read(tail.data(), (std::streamsize)read_size);
 
+	// 바이트 단위 절단은 멀티바이트 문자를 쪼개 invalid UTF-8을 만든다. 그 값이 상태 문서에
+	// 실리면 JSON을 UTF-8로 디코딩하는 클라이언트(Python 인터페이스)가 조회 시 실패한다.
+	// 절단이 발생한 경우에만 선두의 continuation byte(10xxxxxx)를 버려 경계를 맞춘다
+	if (read_size < file_size)
+	{
+		size_t offset = 0;
+		while (offset < tail.size() && ((unsigned char)tail[offset] & 0xC0) == 0x80)
+		{
+			offset += 1;
+		}
+
+		if (offset > 0)
+		{
+			tail.erase(0, offset);
+		}
+	}
+
 	return tail;
 }

@@ -43,6 +43,7 @@ private:
 	auto upload_outputs(const std::string& output_prefix, const std::filesystem::path& outputs_dir) -> std::expected<boost::json::array, std::string>;
 	auto handle_processing_failure(const std::string& job_id, const std::string& message_body, const std::string& reason) -> void;
 	auto set_job_status(const std::string& job_id, const std::string& status, const boost::json::object& updates) -> void;
+	auto is_terminal_status(const std::string& job_id) -> bool;
 
 	std::shared_ptr<Configurations> configurations_;
 	std::shared_ptr<Thread::ThreadPool> thread_pool_;

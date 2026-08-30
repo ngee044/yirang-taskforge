@@ -9,6 +9,7 @@
 
 #include <csignal>
 #include <format>
+#include <iostream>
 #include <memory>
 
 using namespace Utilities;
@@ -22,6 +23,11 @@ auto signal_callback(int32_t signum) -> void;
 
 auto main(int32_t argc, char* argv[]) -> int32_t
 {
+	// 컨테이너의 stdout은 파이프이므로 기본 블록 버퍼링(약 4KB)이 적용된다.
+	// 그대로 두면 최신 로그가 버퍼가 찰 때까지 docker logs에 나타나지 않아
+	// 장애 시점의 관측이 불가능해진다 (NFR-OBS-01)
+	std::cout << std::unitbuf;
+
 	configurations_ = std::make_shared<Configurations>(ArgumentParser(argc, argv));
 
 	Logger::handle().file_mode(configurations_->write_file_log());
@@ -38,11 +44,16 @@ auto main(int32_t argc, char* argv[]) -> int32_t
 
 	worker_ = std::make_shared<TaskForgeWorker>(configurations_);
 
+	// 기동 실패는 0이 아닌 종료 코드로 알린다. exit 0으로 종료하면 오케스트레이터의
+	// restart 정책이 실패를 인지하지 못해 스택이 무증상 불능 상태가 된다 (FR-OPS-02)
+	int32_t exit_code = 0;
+
 	auto started = worker_->start();
 	if (!started)
 	{
 		Logger::handle().write(LogTypes::Error, std::format("cannot start TaskForgeWorker: {}", started.error()));
 		worker_->stop();
+		exit_code = 1;
 	}
 	else
 	{
@@ -59,7 +70,7 @@ auto main(int32_t argc, char* argv[]) -> int32_t
 	Logger::handle().stop();
 	Logger::destroy();
 
-	return 0;
+	return exit_code;
 }
 
 auto register_signal(void) -> void

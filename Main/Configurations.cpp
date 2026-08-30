@@ -35,7 +35,9 @@ Configurations::Configurations(const ArgumentParser& arguments)
 	, sqs_wait_time_seconds_(5)
 	, sqs_visibility_timeout_(60)
 	, sqs_max_number_of_messages_(1)
-	, s3_bucket_("taskforge-jobs")
+	// 기본값을 두면 키 누락이 validate_required를 통과해 FR-OPS-03이 금지한
+	// "조용한 기동"(큐는 소비하되 모든 S3 단계에서만 실패)이 된다
+	, s3_bucket_("")
 	, presign_ttl_sec_(600)
 	, dlq_path_("")
 	, dlq_max_retry_count_(3)
@@ -116,6 +118,26 @@ auto Configurations::dlq_backlog_alert_count(void) const -> int { return dlq_bac
 auto Configurations::default_timeout_sec(void) const -> int { return default_timeout_sec_; }
 
 auto Configurations::task_whitelist(void) const -> const std::vector<TaskDefinition>& { return task_whitelist_; }
+
+auto Configurations::validate_required(void) const -> std::expected<void, std::string>
+{
+	if (sqs_request_queue_url_.empty())
+	{
+		return std::unexpected("sqs_request_queue_url is required");
+	}
+
+	if (s3_bucket_.empty())
+	{
+		return std::unexpected("s3_bucket is required");
+	}
+
+	if (task_whitelist_.empty())
+	{
+		return std::unexpected("task_whitelist must contain at least one task");
+	}
+
+	return {};
+}
 
 auto Configurations::load(void) -> void
 {

@@ -45,6 +45,9 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
     restart: unless-stopped
+    # 컨슈머 스레드는 진행 중인 핸들러가 끝나야 join된다: 태스크 실행 30초 +
+    # 다운로드/재시도 백오프까지 최악 약 46초이므로 기본 유예 10초로는 SIGKILL로 절단된다
+    stop_grace_period: 60s
     volumes:
       - ./config:/app/config:ro
       # DLQ 백로그 지표와 재시도 캐시가 컨테이너 재생성으로 소실되지 않게 한다
