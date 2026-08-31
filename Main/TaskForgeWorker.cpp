@@ -26,6 +26,8 @@ namespace
 	constexpr int retry_max_delay_ms = 8000;
 	constexpr int download_base_delay_ms = 500;
 	constexpr int download_max_delay_ms = 4000;
+	constexpr int redis_base_delay_ms = 500;
+	constexpr int redis_max_delay_ms = 4000;
 
 	// 지수 백오프 + equal jitter (NFR-REL-01). jitter가 없으면 다중 인스턴스의
 	// 재시도가 동시에 몰려(thundering herd) 복구를 방해한다
@@ -275,7 +277,7 @@ auto TaskForgeWorker::connect_redis(void) -> std::expected<void, std::string>
 		}
 
 		Logger::handle().write(LogTypes::Warning, std::format("redis connect attempt {}/{} failed: {}", attempt, redis_connect_attempts, last_error));
-		std::this_thread::sleep_for(std::chrono::milliseconds(500 * attempt));
+		std::this_thread::sleep_for(backoff_with_jitter(attempt, redis_base_delay_ms, redis_max_delay_ms));
 	}
 
 	return std::unexpected(last_error);
@@ -474,7 +476,7 @@ auto TaskForgeWorker::process_job(const boost::json::object& message, const std:
 	auto chrono_begin = Logger::handle().chrono_start();
 
 	// SQS는 at-least-once이므로 이미 종결된 작업의 메시지가 재배달될 수 있다.
-	// 가드가 없으면 done → running → done으로 상태가 역행하고 태스크가 재실행된다 (NFR-REL-01)
+	// 가드가 없으면 done → running → done으로 상태가 역행하고 태스크가 재실행된다 (FR-WRK-10, NFR-REL-01)
 	if (is_terminal_status(job_id))
 	{
 		Logger::handle().write(LogTypes::Information, std::format("job [{}] already terminal: skipping redelivery", job_id));
@@ -485,8 +487,12 @@ auto TaskForgeWorker::process_job(const boost::json::object& message, const std:
 	auto definition = task_executor_->find_task(task_name);
 	if (definition == std::nullopt)
 	{
-		// 화이트리스트 확인 전에 running을 기록하면 결정적 실패에도 상태가 오락가락한다
-		return std::unexpected(std::format("task [{}] is not registered in the whitelist", task_name));
+		// 화이트리스트 확인 전에 running을 기록하면 결정적 실패에도 상태가 오락가락한다.
+		// 미등록은 재시도해도 결과가 바뀌지 않는 결정적 실패이므로 DLQ 재발행 경로를 타지 않는다 —
+		// 그 경로의 백오프 대기는 소비 핸들러 안에서 일어나 워커 전체를 멈춘다 (FR-WRK-03)
+		fail_without_retry(job_id, message, std::format("task [{}] is not registered in the whitelist", task_name));
+
+		return {};
 	}
 
 	set_job_status(job_id, "running", contract_fields(message));
@@ -533,8 +539,7 @@ auto TaskForgeWorker::process_job(const boost::json::object& message, const std:
 		return std::unexpected(uploaded.error());
 	}
 
-	boost::json::object done_updates;
-	done_updates["task_name"] = task_name;
+	boost::json::object done_updates = contract_fields(message);
 	done_updates["exit_code"] = executed.value().exit_code;
 	done_updates["stdout_tail"] = executed.value().stdout_tail;
 	done_updates["result_download_url"] = uploaded.value();
@@ -629,6 +634,18 @@ auto TaskForgeWorker::upload_outputs(const std::string& output_prefix, const std
 	}
 
 	return results;
+}
+
+auto TaskForgeWorker::fail_without_retry(const std::string& job_id, const boost::json::object& message, const std::string& reason) -> void
+{
+	Logger::handle().write(LogTypes::Error, std::format("job [{}] failed without retry: {}", job_id, reason));
+
+	boost::json::object updates = contract_fields(message);
+	updates["failure_reason"] = reason;
+	set_job_status(job_id, "failed", updates);
+
+	// 이전 재시도 흔적이 남아 있으면 백로그 경보(FR-WRK-09)가 오탐한다
+	task_dlq_->remove(job_id);
 }
 
 auto TaskForgeWorker::handle_processing_failure(const std::string& job_id, const std::string& message_body, const std::string& reason) -> void

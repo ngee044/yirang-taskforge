@@ -9,6 +9,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   go:
     name: Go (Interface/golang)
@@ -17,8 +20,8 @@ jobs:
       run:
         working-directory: Interface/golang
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: Interface/golang/go.mod
           cache-dependency-path: Interface/golang/go.sum
@@ -35,8 +38,8 @@ jobs:
       run:
         working-directory: Interface/python
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: pip install -e '.[dev]'
@@ -50,8 +53,8 @@ jobs:
       run:
         working-directory: Interface/js
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -61,27 +64,18 @@ jobs:
       - run: npm run lint
       - run: npm test
 
-  worker:
-    name: C++ worker (Main)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      # 워커는 Ubuntu 24.04 이미지로 빌드된다(CON-04). Dockerfile 경로가 곧 게이트이므로
-      # 호스트 vcpkg 재현 대신 실제 배포 이미지 빌드로 컴파일을 검증한다
-      - name: docker build (worker image)
-        run: docker build -f docker/Dockerfile.worker -t taskforge-worker:ci .
-
   compose:
-    name: Compose build + E2E
+    name: C++ worker build + Compose E2E
     runs-on: ubuntu-24.04
-    needs: [go, python, js, worker]
+    needs: [go, python, js]
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - name: docker compose build
+      # 워커는 Ubuntu 24.04 이미지로 빌드된다(CON-04). Dockerfile 경로가 곧 C++ 컴파일 게이트이며,
+      # 별도 잡으로 분리하면 러너 간 레이어 캐시가 공유되지 않아 동일 이미지를 두 번 빌드하게 된다
+      - name: docker compose build (C++ 워커 컴파일 게이트 포함)
         run: docker compose -f docker/docker-compose.yml build
       - name: stack up
         run: docker compose -f docker/docker-compose.yml up -d
