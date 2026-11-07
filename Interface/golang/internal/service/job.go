@@ -43,6 +43,7 @@ type JobService struct {
 	groupID    string
 }
 
+// NewJobService creates a JobService wired to the given S3, queue and status store adapters.
 func NewJobService(s3 S3Presigner, queue QueueProducer, store StatusStore, presignTTL, statusTTL time.Duration, groupID string) *JobService {
 	return &JobService{
 		s3:         s3,

@@ -1,4 +1,4 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
@@ -9,6 +9,7 @@ import { REDIS_COMMAND_TIMEOUT_MS } from './timeouts';
 @Injectable()
 export class RedisService implements OnModuleDestroy {
   private readonly client: Redis;
+  private readonly logger = new Logger(RedisService.name);
 
   constructor(config: ConfigService<AppConfig, true>) {
     const password = config.get('redisPassword', { infer: true });
@@ -24,6 +25,8 @@ export class RedisService implements OnModuleDestroy {
       maxRetriesPerRequest: 2,
       lazyConnect: true,
     });
+    // error 리스너가 없으면 ioredis가 재연결 실패마다 console.error로 스택을 출력해 구조적 로그를 우회한다
+    this.client.on('error', (error: Error) => this.logger.warn(`redis error: ${error.message}`));
   }
 
   async get(key: string): Promise<string | null> {

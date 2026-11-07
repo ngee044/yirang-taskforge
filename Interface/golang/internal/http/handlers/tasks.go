@@ -16,6 +16,7 @@ type TasksHandler struct {
 	jobs *service.JobService
 }
 
+// NewTasksHandler creates a TasksHandler backed by the given JobService.
 func NewTasksHandler(jobs *service.JobService) *TasksHandler {
 	return &TasksHandler{jobs: jobs}
 }

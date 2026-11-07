@@ -92,6 +92,16 @@ describe('JobsService', () => {
     expect(status.task_name).toBe('wordcount');
   });
 
+  it('omits an explicit null timeout_sec from the queue message', async () => {
+    const { service, sentBodies } = makeService();
+
+    // ValidationPipe의 @IsOptional은 null을 통과시키므로 런타임에는 null이 도달한다
+    await service.createJob({ task_name: 'wordcount', timeout_sec: null as unknown as number });
+
+    const message = JSON.parse(sentBodies[0]) as { task: Record<string, unknown> };
+    expect(message.task).toEqual({ name: 'wordcount', arguments: [] });
+  });
+
   it('maps queue failure to EnqueueError', async () => {
     const { service } = makeService({ enqueueFails: true });
 

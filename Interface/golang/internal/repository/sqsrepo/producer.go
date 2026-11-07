@@ -21,6 +21,7 @@ type Producer struct {
 	queueURL string
 }
 
+// New creates a Producer that sends messages to queueURL.
 func New(client *sqs.Client, queueURL string) *Producer {
 	return &Producer{client: client, queueURL: queueURL}
 }

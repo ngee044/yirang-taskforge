@@ -19,12 +19,13 @@ type JobsHandler struct {
 	jobs *service.JobService
 }
 
+// NewJobsHandler creates a JobsHandler backed by the given JobService.
 func NewJobsHandler(jobs *service.JobService) *JobsHandler {
 	return &JobsHandler{jobs: jobs}
 }
 
 type inputFileDTO struct {
-	Filename string `json:"filename" binding:"required"`
+	Filename string `json:"filename"`
 }
 
 type createJobDTO struct {
@@ -33,7 +34,8 @@ type createJobDTO struct {
 	TaskName   string         `json:"task_name" binding:"required,max=128"`
 	Arguments  []string       `json:"arguments"`
 	InputFiles []inputFileDTO `json:"input_files"`
-	TimeoutSec int            `json:"timeout_sec" binding:"omitempty,gte=1,lte=3600"`
+	// A pointer lets an explicit 0 reach gte=1; with a plain int omitempty treats 0 as absent.
+	TimeoutSec *int `json:"timeout_sec" binding:"omitempty,gte=1,lte=3600"`
 }
 
 // Create handles POST /api/v1/jobs and replies 202 with presigned upload URLs.
@@ -56,11 +58,16 @@ func (h *JobsHandler) Create(c *gin.Context) {
 		filenames = append(filenames, file.Filename)
 	}
 
+	timeoutSec := 0
+	if dto.TimeoutSec != nil {
+		timeoutSec = *dto.TimeoutSec
+	}
+
 	result, err := h.jobs.CreateJob(c.Request.Context(), service.CreateJobInput{
 		TaskName:   dto.TaskName,
 		Arguments:  dto.Arguments,
 		InputFiles: filenames,
-		TimeoutSec: dto.TimeoutSec,
+		TimeoutSec: timeoutSec,
 	})
 	if err != nil {
 		slog.Error("create job failed", "error", err)

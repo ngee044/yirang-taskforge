@@ -36,7 +36,24 @@ export class DomainExceptionFilter implements ExceptionFilter {
       return;
     }
 
+    // body-parser 오류(413 본문 초과, 415 charset 등)는 HttpException이 아니라 catch-all로 떨어진다.
+    // Nest가 400으로 바꿔 주는 JSON 문법 오류와 같은 요청 본문 오류이므로 계약 A-1의 400으로 응답한다
+    if (isClientHttpError(exception)) {
+      this.logger.warn(`request body rejected: ${String(exception)}`);
+      response.status(400).json(errorEnvelope('invalid_request', 'request body is invalid'));
+      return;
+    }
+
     this.logger.error(`unhandled error: ${String(exception)}`);
     response.status(500).json(errorEnvelope('internal_error', 'internal error'));
   }
+}
+
+function isClientHttpError(exception: unknown): boolean {
+  if (typeof exception !== 'object' || exception === null || !('status' in exception)) {
+    return false;
+  }
+
+  const status = exception.status;
+  return typeof status === 'number' && status >= 400 && status < 500;
 }

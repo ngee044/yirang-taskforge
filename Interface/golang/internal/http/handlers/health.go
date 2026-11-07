@@ -19,6 +19,7 @@ type HealthHandler struct {
 	probes    map[string]Pinger
 }
 
+// NewHealthHandler creates a HealthHandler that checks the given readiness probes.
 func NewHealthHandler(probes map[string]Pinger) *HealthHandler {
 	return &HealthHandler{startedAt: time.Now(), probes: probes}
 }

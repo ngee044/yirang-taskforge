@@ -20,12 +20,16 @@ type Repository struct {
 	client *redis.Client
 }
 
+// New creates a Repository connected to the Redis server at addr.
 func New(addr string, db int, password string) *Repository {
 	return &Repository{
 		client: redis.NewClient(&redis.Options{
 			Addr:     addr,
 			DB:       db,
 			Password: password,
+			// Without this, go-redis ignores ctx deadlines for socket I/O and falls back to the
+			// 3s default ReadTimeout, so operationTimeout would never take effect.
+			ContextTimeoutEnabled: true,
 		}),
 	}
 }

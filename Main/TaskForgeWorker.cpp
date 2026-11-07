@@ -277,7 +277,10 @@ auto TaskForgeWorker::connect_redis(void) -> std::expected<void, std::string>
 		}
 
 		Logger::handle().write(LogTypes::Warning, std::format("redis connect attempt {}/{} failed: {}", attempt, redis_connect_attempts, last_error));
-		std::this_thread::sleep_for(backoff_with_jitter(attempt, redis_base_delay_ms, redis_max_delay_ms));
+		if (attempt < redis_connect_attempts)
+		{
+			std::this_thread::sleep_for(backoff_with_jitter(attempt, redis_base_delay_ms, redis_max_delay_ms));
+		}
 	}
 
 	return std::unexpected(last_error);

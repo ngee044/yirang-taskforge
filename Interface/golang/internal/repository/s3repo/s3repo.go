@@ -17,6 +17,7 @@ type Repository struct {
 	bucket  string
 }
 
+// New creates a Repository that presigns objects in bucket.
 func New(client *s3.Client, bucket string) *Repository {
 	return &Repository{
 		client:  client,

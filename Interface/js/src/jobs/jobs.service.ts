@@ -83,7 +83,8 @@ export class JobsService {
       task: {
         name: dto.task_name,
         arguments: dto.arguments ?? [],
-        ...(dto.timeout_sec !== undefined ? { timeout_sec: dto.timeout_sec } : {}),
+        // @IsOptional은 null도 통과시킨다. null을 실으면 워커가 계약 B 스키마 위반으로 failed 처리한다
+        ...(dto.timeout_sec != null ? { timeout_sec: dto.timeout_sec } : {}),
       },
       download_s3: downloads,
       output_prefix: `jobs/${jobId}/outputs/`,

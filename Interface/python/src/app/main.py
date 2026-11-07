@@ -94,9 +94,11 @@ def create_app() -> FastAPI:
         return failure(exc.code, "internal error", status_code=500)
 
     # 인프라 예외(Redis/boto3 등)도 스택을 노출하지 않고 envelope로 응답한다
+    # ServerErrorMiddleware는 응답 후 예외를 다시 던져 uvicorn이 traceback을 남긴다.
+    # 여기서도 traceback을 남기면 건마다 중복되므로 한 줄만 기록한다(%r: str()이 빈 TimeoutError 대비)
     @app.exception_handler(Exception)
     async def unhandled_error(_: Request, exc: Exception):
-        logger.exception("unhandled error: %s", exc)
+        logger.error("unhandled error: %r", exc)
         return failure("internal_error", "internal error", status_code=500)
 
     return app
