@@ -1,6 +1,4 @@
 # YTF-STP-001 §1의 언어 게이트를 PR마다 자동 실행한다.
-# 수동 1회 실행에 의존한 결과 build.sh가 2주간 깨진 채 방치된 것이 도입 근거다
-# (YTF-VER-001 VER-M-21).
 name: gates
 
 on:
@@ -43,7 +41,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -e '.[dev]'
-      - run: ruff check .
+      - run: ruff check . ../../Tests/worker_recovery_test.py
+      - run: ruff format --check . ../../Tests/worker_recovery_test.py
       - run: pytest -q
 
   js:
@@ -62,6 +61,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run lint
+      - run: npm run format:check
       - run: npm test
 
   compose:
@@ -73,6 +73,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+      - name: C++ formatting
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format-19
+          clang-format-19 --dry-run --Werror Main/*.cpp Main/*.h Tests/*.cpp
       # 워커는 Ubuntu 24.04 이미지로 빌드된다(CON-04). Dockerfile 경로가 곧 C++ 컴파일 게이트이며,
       # 별도 잡으로 분리하면 러너 간 레이어 캐시가 공유되지 않아 동일 이미지를 두 번 빌드하게 된다
       - name: docker compose build (C++ 워커 컴파일 게이트 포함)
@@ -81,6 +86,8 @@ jobs:
         run: docker compose -f docker/docker-compose.yml up -d
       - name: e2e
         run: bash docker/scripts/e2e_test.sh
+      - name: Redis failure and SQS redelivery
+        run: python3 Tests/worker_recovery_test.py
       - name: worker logs on failure
         if: failure()
         run: docker compose -f docker/docker-compose.yml logs --tail 200
