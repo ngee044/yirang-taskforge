@@ -3,16 +3,16 @@
 | 항목 | 내용 |
 |---|---|
 | 문서 ID | YTF-CONV-PY-001 |
-| 버전 | 1.1.0 |
+| 버전 | 1.2.0 |
 | 기준 표준 | 프로젝트 코드 규약; 체크아웃 설정·API 확인 |
 | 작성일 | 2026-11-07 (현행화 판) |
 | 최종 수정일 | 2026-11-07 |
 | 상태 | Active — 사용자 승인 여부를 뜻하지 않음 |
-| 대상 커밋 | `6f7fb67` |
+| 대상 커밋 | `21888c7` |
 
 ## 현재 적용 상태
 
-대상은 `Interface/python/src/app`과 `tests`입니다. `pyproject.toml:5` 최소 Python 3.11, Docker/CI는 3.12입니다. 현재 도구는 pip 기반 설치·ruff·pytest입니다. mypy strict·lockfile·uv/poetry·pre-commit·취약점 검사 규약은 미도입으로 남아 있으며 검사 통과로 간주하지 않습니다. ruff 실제 line-length는 120, select에는 ASYNC가 없습니다. 아래 도입 예시 설정과 실물을 구분합니다. SQLAlchemy/Alembic·gRPC·OpenTelemetry 예시는 해당 기술을 채택할 때만 적용합니다.
+대상은 `Interface/python/src/app`과 `tests`입니다. `pyproject.toml:5` 최소 Python 3.11, Docker/CI는 3.12입니다. 현재 도구는 pip 기반 설치·ruff·pytest이며 CI는 lint·format·pytest를 실행합니다. `Tests/worker_recovery_test.py`도 Interface/python 작업 디렉터리에서 같은 Ruff 설정으로 검사합니다. mypy strict·lockfile·uv/poetry·pre-commit·취약점 검사 규약은 미도입으로 남아 있으며 검사 통과로 간주하지 않습니다. ruff 실제 line-length는 120, select에는 ASYNC가 없습니다. 아래 도입 예시 설정과 실물을 구분합니다. SQLAlchemy/Alembic·gRPC·OpenTelemetry 예시는 해당 기술을 채택할 때만 적용합니다.
 
 Python 3.11+ 기반 REST API 프로젝트의 코드 일관성·타입 안정성·유지보수성을 확보하기 위한 규약입니다. FastAPI + Pydantic v2를 기준으로 하며, 이 저장소의 Python API에 적용합니다.
 
@@ -64,7 +64,7 @@ warn_unused_ignores = true
 disallow_untyped_defs = true
 ```
 
-- 목표 CI 게이트는 아래 4단계를 반드시 강제해야 합니다. 현행 CI가 충족하지 않는 format/type check 단계는 상단에 명시합니다.
+- 목표 CI 게이트는 아래 4단계를 반드시 강제해야 합니다. 현행 CI는 format/lint/test를 실행하며 type check 미도입은 상단에 명시합니다.
 
 ```bash
 uv run ruff format --check .
@@ -87,7 +87,7 @@ Interface/python/
 │   ├── schemas/jobs.py
 │   ├── services/job_service.py
 │   └── repositories/        # Redis/S3/SQS
-└── tests/test_job_service.py
+└── tests/                  # test_job_service.py, test_health.py
 ```
 
 src 레이아웃을 유지하고 모듈 단일 책임·순환 import 금지·계층별 명시 타입 변환을 지킵니다. 현재 SQL ORM/db/migrations 계층은 없습니다. lockfile·pre-commit은 미도입 상태이며 존재하는 파일로 나열하지 않습니다.
@@ -593,3 +593,4 @@ PR 전 아래 항목을 확인합니다.
 |---|---|---|
 | 초기 언어 가이드 적용판 | 이전 판 | 초기 작성 및 누적 검증 기록 |
 | 1.1.0 | 2026-11-07 | 기존 언어 규칙 유지, 실제 구조·도구 상태·미도입 요구 구분 및 잘못된 경로/API 정정 |
+| 1.2.0 | 2026-11-07 | CI format·health 회귀·공용 복구 스크립트의 Python 규약 검사 범위 반영 |

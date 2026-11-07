@@ -5,8 +5,8 @@ yirang-taskforge의 작업 접수/조회 API입니다. 세 구현은 [공통 계
 | 구현 | 스택 | 포트 | 검증 게이트 |
 |---|---|---|---|
 | [`golang/`](golang) | Go 1.24+ · Gin · aws-sdk-go-v2 · go-redis | 8080 | `gofmt` `go build` `go vet` `go test -race` |
-| [`python/`](python) | Python 3.11+ · FastAPI · boto3 · redis-py | 8081 | `ruff check` `pytest` |
-| [`js/`](js) | Node.js 20+ · NestJS · TypeScript strict · @aws-sdk v3 · ioredis | 8082 | `tsc` `eslint` `jest` |
+| [`python/`](python) | Python 3.11+ · FastAPI · boto3 · redis-py | 8081 | `ruff check` `ruff format --check` `pytest` |
+| [`js/`](js) | Node.js 20+ · NestJS · TypeScript strict · @aws-sdk v3 · ioredis | 8082 | `build` `lint` `format:check` `test` |
 
 ## 공통 엔드포인트
 

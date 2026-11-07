@@ -56,9 +56,10 @@ sequenceDiagram
     C->>S3: PUT 입력 파일 (presigned)
 
     Q->>W: 롱폴링 수신
+    W->>W: 요청 스키마·화이트리스트 검증
     W->>R: status=running (병합)
-    W->>S3: 입력 다운로드 (3회 재시도)
-    W->>W: 화이트리스트 검증 → 실행 (타임아웃)
+    W->>S3: 입력 다운로드 (파일별 최대 3회 시도)
+    W->>W: 태스크 실행 (타임아웃)
     W->>S3: 결과 업로드 + presigned GET
     W->>R: status=done {exit_code, result_download_url[]}
     Note over W,Q: 핸들러 성공 반환 시에만 메시지 삭제 (at-least-once)
@@ -71,7 +72,7 @@ sequenceDiagram
     C->>S3: GET 결과 파일 (presigned)
 ```
 
-실패 경로: 실행·파일 처리 실패 → 파일 DLQ에 try_count 기록 → 3회까지 요청 큐 재발행 → 소진 시 `failed` 확정. 스키마 위반과 화이트리스트 미등록 태스크는 재시도하지 않습니다.
+실패 경로: 실행·파일 처리 실패 → 파일 DLQ에 try_count 기록 → 3회까지 요청 큐 재발행 → 소진 시 `failed` 확정. 스키마 위반과 화이트리스트 미등록 태스크는 재발행하지 않습니다. Redis 상태 조회·저장이 실패하면 ACK를 보류하여 SQS 재수신으로 복구합니다.
 
 ## 구성 요소
 
@@ -168,11 +169,15 @@ SQS_REQUEST_QUEUE_URL=... AWS_ENDPOINT_URL=http://localhost:4566 npm start
 
 | 대상 | 명령 |
 |---|---|
-| C++ | `./build.sh` (컴파일 에러 0) |
+| C++ | `./build.sh && ctest --test-dir build --output-on-failure` |
+| C++ 포맷 | `clang-format-19 --dry-run --Werror Main/*.cpp Main/*.h Tests/*.cpp` |
 | Go | `test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test -race ./...` |
-| Python | `.venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/pytest` |
-| JS | `npm run build && npm run lint && npm test` |
+| Python | `.venv/bin/ruff check . ../../Tests/worker_recovery_test.py && .venv/bin/ruff format --check . ../../Tests/worker_recovery_test.py && .venv/bin/pytest` |
+| JS | `npm run build && npm run lint && npm run format:check && npm test` |
 | E2E | `docker/scripts/e2e_test.sh` |
+| Redis 장애·SQS 복구 | Compose 기동 후 `python3 Tests/worker_recovery_test.py` |
+
+Go/Python/JS 명령은 해당 `Interface/` 서비스 디렉터리에서, 나머지는 프로젝트 루트에서 실행합니다.
 
 ## 새 태스크 추가하기
 

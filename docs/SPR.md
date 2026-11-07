@@ -3,32 +3,35 @@
 | 항목 | 내용 |
 |---|---|
 | 문서 ID | YTF-SPR-001 |
-| 버전 | 1.0.0 |
+| 버전 | 1.1.0 |
 | 기준 표준 | ISO/IEC/IEEE 29119-3:2021, ISO/IEC/IEEE 12207:2017 §6.3.7 |
 | 작성일 / 최종 수정일 | 2026-11-07 / 2026-11-07 |
 | 상태 | Active |
-| 대상 커밋 | `6f7fb67` |
+| 대상 커밋 | `21888c7` |
 
-## 1. 기준선 결함
+## 1. 시정 결과
 
-| ID | 관련 요구사항 | 현상·원인 | 재현·근거 | 조치·상태 |
-|---|---|---|---|---|
-| SPR-001 | FR-OPS-02 | 시그널 핸들러가 기동 중 worker 자원을 해제 | Redis 닫힌 포트 연결 재시도 중 SIGTERM → 종료 코드 -11; `Main/main.cpp:96` | T-003 예정 |
-| SPR-002 | FR-WRK-05 | 타임아웃이 부모 PID에만 적용되어 자손 실행 지속 | 1초 timeout 반환 후 자손이 3초 지연 출력 생성; `Main/TaskExecutor.cpp:97` | T-004 예정 |
-| SPR-003 | FR-WRK-01/06/10, NFR-REL-01 | 상태 저장 실패를 로그만 남겨 소비 핸들러가 ACK | `Main/TaskForgeWorker.cpp:778` 실패 처리와 `:469` 성공 반환의 도달 경로 확인 | T-005 예정; 장애 주입 회귀 필요 |
-| SPR-004 | FR-OPS-01, NFR-SEC-03 | readiness가 probe별 3초를 직렬 누적하며 원시 오류를 노출 | Python 9.01초·JS 9.004초(3개 스톨); `routes.py:62`, `health.controller.ts:30` | T-006 예정 |
-| SPR-005 | FR-WRK-04 | 기본 태스크가 숨김 입력 파일을 누락 | `.hidden.txt` 단독 입력 시 두 스크립트 exit 1; `Main/tasks/wordcount.sh:10`, `Main/tasks/checksum.sh:18` | T-007 예정 |
-| SPR-006 | 컨벤션·검증 | 포매터 설정 파싱 실패 | clang-format 22.1.8, `.clang-format:39` `unknown enumerated scalar` | T-002 예정 |
-| SPR-007 | FR-OPS-02 | JS Redis 연결을 HTTP drain 이전에 닫아 진행 중 요청 실패 가능 | `Interface/js/src/infra/redis.service.ts:48` onModuleDestroy; 상위 세션의 Nest 수명주기 확인 | T-011 예정; 실제 drain 후 quit 회귀 계획 |
+초기 재현은 `6f7fb67`, 시정 코드는 `21888c7`에 포함됩니다. 결함을 수정한 커밋과 회귀 테스트를 함께 연결하며 과거 실패를 현재 결함으로 표시하지 않습니다.
 
-SPR-001/002/005는 리뷰 에이전트가 격리 프로브로, SPR-004/006은 주 세션이 실행으로 재현했습니다. SPR-003은 기준선 코드 경로로 확인했으며 동적 복구 시험을 조치 완료 조건으로 둡니다. 테스트 결과의 현재 기준은 [VERIFICATION](VERIFICATION.md)입니다.
+| ID | 요구사항·초기 문제 | 시정 근거 | 회귀·종결 |
+|---|---|---|---|
+| SPR-001 | FR-OPS-02: 기동 중 SIGTERM -11 | `Main/main.cpp:19` 신호 차단·sigwait, `f951f41` | IT-26 startup_shutdown·정상 종료, 종결 |
+| SPR-002 | FR-WRK-05: timeout 뒤 자손 실행 | `Main/TaskExecutor.cpp:26`, `:125` 프로세스 그룹·마스크, `fb22b8d` | IT-27 executor, 종결 |
+| SPR-003 | FR-WRK-01/06/10: 상태 오류 후 ACK | `Main/TaskForgeWorker.cpp:738` optional 조회, `:757` 저장 expected, `a676d7d` | IT-28 읽기/쓰기 실패 NACK·값 보존·복구 ACK, 종결 |
+| SPR-004 | FR-OPS-01/NFR-SEC-03: readiness 약 9초·raw 오류 | Python/JS 병렬 3초 제한, 3종 unavailable, `3ca5174` | IT-12 언어별 회귀, 종결 |
+| SPR-005 | FR-WRK-04: 숨김 입력 누락 | 두 태스크 dotglob, `f1d29a9` | IT-29 task_scripts, 종결 |
+| SPR-006 | 컨벤션: 포매터 설정 파싱 실패 | `.clang-format:39` Latest, `b4f3a05` | clang-format 19/22 dry-run, 종결 |
+| SPR-007 | FR-OPS-02: Redis를 HTTP drain 전에 해제 | `Interface/js/src/infra/redis.service.ts:49` onApplicationShutdown, `9516348` | IT-30 실제 Nest HTTP drain 테스트, 종결 |
 
-## 2. 종료 기준
+## 2. 검증 강도와 잔여
 
-각 문제는 원인 수정, 재현 회귀 테스트 통과, 독립 코드 리뷰, 관련 RTM 갱신을 마친 뒤 종결합니다. 진행·커밋 기록은 [task_list](task_list.md)에서 관리합니다.
+각 시정은 독립 코드·구조·보안 리뷰와 관련 회귀를 통과했습니다. CTest는 등록 5/실행 5/PASS 5/FAIL 0/SKIP 0이며 언어별 검사는 [VERIFICATION](VERIFICATION.md)을 참조합니다. IT-12의 Go deadline/취소·Python 동시 시작/즉시 timeout·JS 가상시간 검증을 실제 원격 스톨 전체 실측과 혼동하지 않습니다.
+
+워커 Redis I/O timeout 미지원, done 기록 실패 뒤 재실행 가능성, 장기 작업 종료 상한·Windows 미지원은 위 결함 종결로 해소되는 항목이 아닙니다. 후속 범위는 [task_list](task_list.md)에서 유지합니다.
 
 ## 변경 이력
 
 | 버전 | 일자 | 변경 |
 |---|---|---|
 | 1.0.0 | 2026-11-07 | 기준선 결함 7건과 검증 조건 등록 |
+| 1.1.0 | 2026-11-07 | 7개 문제의 수정 커밋·회귀·종결과 잔여 범위 기록 |

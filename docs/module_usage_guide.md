@@ -3,11 +3,11 @@
 | 항목 | 내용 |
 |---|---|
 | 문서 ID | YTF-GUIDE-001 |
-| 버전 | 1.0.0 |
+| 버전 | 1.1.0 |
 | 기준 | 체크아웃된 CppToolkit 헤더·구현·Samples |
 | 작성일 / 최종 수정일 | 2026-11-07 / 2026-11-07 |
 | 상태 | Active |
-| 대상 커밋 | 앱 `6f7fb67`, CppToolkit `a3392056bc9177b1fd5d94e57296f6b42718261c` |
+| 대상 커밋 | 앱 `21888c7`, CppToolkit `a3392056bc9177b1fd5d94e57296f6b42718261c` |
 
 외부의 최신 API를 현재 서브모듈에 있는 것으로 가정하지 않습니다. `.CppToolkit/docs/module_usage_guide.md`는 이 체크아웃에 없으므로 본 문서와 실제 헤더를 사용합니다.
 
@@ -20,7 +20,7 @@
 | `.CppToolkit/Redis` | `Redis` | `Redis` | `RedisClient.h`, `TLSOptions.h` |
 | `.CppToolkit/AWSService` | `AWSService` | `AWSService` | `AWSS3Client.h`, `AWSSQSConsumer.h`, `AWSSQSPublisher.h` |
 
-프로젝트 include는 `#include "Logger.h"`처럼 flat 경로를 사용합니다. `Main/CMakeLists.txt:30`은 네 타깃과 필요한 Boost 타깃을 링크합니다. `Aws::InitAPI`/`Aws::ShutdownAPI`는 `Main/main.cpp:43`에서 앱이 소유합니다.
+프로젝트 include는 `#include "Logger.h"`처럼 flat 경로를 사용합니다. `Main/CMakeLists.txt:30`은 네 타깃과 필요한 Boost 타깃을 링크합니다. `Aws::InitAPI`/`Aws::ShutdownAPI`는 `Main/main.cpp:49`에서 앱이 소유합니다.
 
 ### 외부 의존성 매핑
 
@@ -78,7 +78,7 @@ Logger::destroy();
 - `ThreadPool::start()`·`stop(bool)`는 `std::expected<void, std::string>`을 반환합니다(`ThreadPool.h:36`). 결과를 확인합니다.
 - `stop(true)`는 대기 중 잡을 버린 뒤 워커 종료를 기다립니다. 실행 중 콜백을 강제 취소하지 않습니다(`ThreadPool.cpp:265`). `ThreadPool::wait_stop()`은 없습니다.
 - `Job` 콜백 성공은 `return {};`, 실패는 `return std::unexpected("...");`입니다(`Job.h:26`). bool 성공값으로 바꾸지 않습니다.
-- 상주 루프에는 전용 `LongTerm` 워커와 종료 조건이 필요합니다. 먼저 종료 조건을 바꾼 뒤 `stop()`을 호출해야 join이 끝납니다. 앱은 DLQ 모니터 루프를 이 방식으로 사용합니다(`Main/TaskForgeWorker.cpp:391`).
+- 상주 루프에는 전용 `LongTerm` 워커와 종료 조건이 필요합니다. 먼저 종료 조건을 바꾼 뒤 `stop()`을 호출해야 join이 끝납니다. 앱은 protected `dlq_backlog_monitor`를 한 줄 람다·같은 Job 제목으로 등록하고 조건 변수로 대기합니다(`Main/TaskForgeWorker.cpp:381`). `stop()`은 running 하강·통지 후 풀을 종료합니다(`:188`). 상세 규칙은 [C++ 규약 §11.1/11.2](conventions/CPP_CODING_CONVENTION.md)를 따릅니다.
 
 ## 4. Redis와 AWS
 
@@ -89,6 +89,7 @@ Logger::destroy();
 | Redis transaction | `transaction_functions(callback)`가 `expected<QueuedReplies,string>` 반환(`RedisClient.h:91`); 실제 연결·응답 타입은 헤더 확인 |
 | S3 전송 | `upload_file`·`download_file`은 bucket/object/local filename 순서(`AWSS3Client.h:25`) |
 | S3 presign | `generate_presigned_url(bucket, object, expiration_sec, HttpMethod)`; 결과는 `expected<string,string>`(`AWSS3Client.h:37`) |
+| 앱 Redis 조회 | `read_job_status`는 transaction의 OptionalString으로 nil과 오류를 분리하고 expected로 전파합니다(`Main/TaskForgeWorker.cpp:738`). `RedisClient::get`의 오류 문자열 비교로 부재를 추측하지 않습니다 |
 | SQS 소비 | 소비 핸들러의 expected 성공 여부가 메시지 삭제를 제어(`AWSSQSBase.cpp:109` `receive_process_once`); 앱에서 오류를 삼키지 않도록 확인 |
 
 SDK 시간 제한·호출 예외 동작은 설치된 버전의 헤더와 공식 문서로 확인하며 새 API가 있다고 추정하지 않습니다. 별도 저장소인 CppToolkit의 변경은 앱 수정과 구분합니다.
@@ -98,3 +99,4 @@ SDK 시간 제한·호출 예외 동작은 설치된 버전의 헤더와 공식 
 | 버전 | 일자 | 변경 |
 |---|---|---|
 | 1.0.0 | 2026-11-07 | 체크아웃 실측 기반 모듈·Logger·ThreadPool·Redis/AWS 사용 규약 정리 |
+| 1.1.0 | 2026-11-07 | 앱의 optional Redis 조회·상주 모니터·종료 순서 사용 사례 동기화 |

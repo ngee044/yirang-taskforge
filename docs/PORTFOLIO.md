@@ -3,12 +3,12 @@
 | 항목 | 내용 |
 |---|---|
 | 문서 ID | YTF-PORT-001 |
-| 버전 | 1.0.0 |
+| 버전 | 1.1.0 |
 | 기준 표준 | ISO/IEC/IEEE 42010:2022 (구조 설명) |
 | 작성일 | 2026-11-07 (현행화 판) |
 | 최종 수정일 | 2026-11-07 |
 | 상태 | Active — 사용자 승인 여부를 뜻하지 않음 |
-| 대상 커밋 | `6f7fb67` |
+| 대상 커밋 | `21888c7` |
 
 ## 프로젝트 컨셉
 
@@ -18,17 +18,17 @@ HTTP 요청을 SQS FIFO에 넣고 C++23 워커가 whitelist 실행파일을 실�
 
 | 구성 | 구현 내용 | 근거 |
 |---|---|---|
-| Main | JSON 검증·whitelist 실행·입출력·timeout·DLQ 재발행 | `Main/TaskForgeWorker.cpp:413`, `Main/TaskExecutor.cpp:40` |
+| Main | JSON 검증·whitelist 실행·입출력·timeout·DLQ 재발행 | `Main/TaskForgeWorker.cpp:404`, `Main/TaskExecutor.cpp:69` |
 | API 3종 | 접수 202·presigned PUT·상태 조회·카탈로그·health/readiness | [API 계약](API.md) |
 | 상태·파일 | queued/running/done/failed, Redis 병합·TTL, S3 presigned GET | [SAD §3](SAD.md) |
 | 배포 | Docker Compose 6개 서비스, 애플리케이션 이미지 4개 | `docker/docker-compose.yml:1` |
-| 자동 검사 | CI 4개 잡: Go, Python, JS, Compose | `.github/workflows/gates.yml:16` |
+| 자동 검사 | CI 4개 잡: Go, Python, JS, Compose | `.github/workflows/gates.yml:14` |
 
 실행 방법은 [루트 README](../README.md), API별 명령은 [Interface README](../Interface/README.md)를 사용합니다. CppToolkit 정확한 API는 [모듈 가이드](module_usage_guide.md)에서 확인합니다.
 
 ## 검증 수준과 한계
 
-2026-11-07 기준선의 C++·언어별 빌드 게이트와 로컬 Compose E2E 19개 검사는 통과했습니다. C++ 자동 테스트는 기준선 0건입니다. 정상 E2E 통과가 전체 신뢰성 충족을 뜻하지는 않습니다. 기동 중 종료 충돌, timeout 자손 실행, Redis 상태 오류 후 ACK, readiness 총시간, 숨김 입력 처리의 미해결 결함은 [SPR](SPR.md)에서 추적합니다.
+2026-11-07 최종 코드의 C++·언어별 빌드/포맷 게이트와 CTest5, Python8, Jest9, Compose E2E19, 격리 장애 복구4그룹을 통과했습니다. 기동 중 종료 충돌·자손 timeout·상태 오류 ACK·readiness·숨김 입력·HTTP drain 결함을 수정하고 독립 리뷰와 회귀를 마쳤습니다. 각 실행의 환경과 검증 범위는 [VERIFICATION](VERIFICATION.md), 시정 기록은 [SPR](SPR.md)이 기준입니다.
 
 API의 정상 계약은 공유하지만 검증 오류 코드·파일명 길이 단위·배열 상한의 차이는 남아 있습니다. Redis와 SQS 사이 원자적 트랜잭션, 업로드 완료 확인, exactly-once 실행, 워커 Redis timeout은 제공하지 않습니다. 인증·과금·웹 콘솔·분산 추적 백엔드는 미구현입니다. 세부 검사 강도와 실행 기록은 [VERIFICATION](VERIFICATION.md)이 기준입니다.
 
@@ -48,3 +48,4 @@ API의 정상 계약은 공유하지만 검증 오류 코드·파일명 길이 �
 |---|---|---|
 | 초기 소개판 | 이전 판 | 초기 작성 및 누적 검증 기록 |
 | 1.0.0 | 2026-11-07 | 고정 LOC·과거 결함 수·미커밋 CI 서술 제거, 실재 구현과 검증 범위 정리 |
+| 1.1.0 | 2026-11-07 | 최종 검증과 시정 완료·남은 제약을 반영 |

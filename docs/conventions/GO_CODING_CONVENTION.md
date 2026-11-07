@@ -3,16 +3,16 @@
 | 항목 | 내용 |
 |---|---|
 | 문서 ID | YTF-CONV-GO-001 |
-| 버전 | 1.1.0 |
+| 버전 | 1.2.0 |
 | 기준 표준 | 프로젝트 코드 규약; 체크아웃 설정·API 확인 |
 | 작성일 | 2026-11-07 (현행화 판) |
 | 최종 수정일 | 2026-11-07 |
 | 상태 | Active — 사용자 승인 여부를 뜻하지 않음 |
-| 대상 커밋 | `6f7fb67` |
+| 대상 커밋 | `21888c7` |
 
 ## 현재 적용 상태
 
-대상은 `Interface/golang`입니다. `go.mod:3` 최소 버전은 1.24입니다. 기준선 CI는 gofmt·build·vet·race test를 실행합니다. 아래 규범의 goimports·golangci-lint·staticcheck·govulncheck 및 모듈 tidy 검사는 CI 미도입이며 통과로 간주하지 않습니다. 일반 SQL/gRPC/Swaggo 예시는 사용 시 적용할 규약이고 현재 기능을 뜻하지 않습니다.
+대상은 `Interface/golang`입니다. `go.mod:3` 최소 버전은 1.24입니다. 기준선 CI는 gofmt·build·vet·race test를 실행합니다. 아래 규범의 goimports·golangci-lint·staticcheck·govulncheck 및 모듈 tidy 검사는 CI 미도입이며 통과로 간주하지 않습니다. 일반 SQL/gRPC/Swaggo 예시는 사용 시 적용할 규약이고 현재 기능을 뜻하지 않습니다. `StatusStore.Get`은 `(value string, found bool, err error)`로 부재와 장애를 구분하며 서비스는 구체 redisrepo 오류를 import하지 않습니다(`Interface/golang/internal/service/job.go:29`).
 
 yirang-taskforge의 `Interface/golang`(Gin 기반 REST API, Go 1.24+)에 적용하는 코딩 규약입니다. (`basic-ai-agent-guideline/golang_guideline`에서 도입)
 
@@ -607,3 +607,4 @@ PR 생성·리뷰 전 아래 항목을 확인합니다.
 |---|---|---|
 | 초기 언어 가이드 적용판 | 이전 판 | 초기 작성 및 누적 검증 기록 |
 | 1.1.0 | 2026-11-07 | 기존 언어 규칙 유지, 실제 구조·도구 상태·미도입 요구 구분 및 잘못된 경로/API 정정 |
+| 1.2.0 | 2026-11-07 | 소비자 저장소 인터페이스의 부재/오류 계약과 실제 게이트 확인 |

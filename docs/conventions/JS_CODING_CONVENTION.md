@@ -3,16 +3,16 @@
 | 항목 | 내용 |
 |---|---|
 | 문서 ID | YTF-CONV-JS-001 |
-| 버전 | 1.1.0 |
+| 버전 | 1.2.0 |
 | 기준 표준 | 프로젝트 코드 규약; 체크아웃 설정·API 확인 |
 | 작성일 | 2026-11-07 (현행화 판) |
 | 최종 수정일 | 2026-11-07 |
 | 상태 | Active — 사용자 승인 여부를 뜻하지 않음 |
-| 대상 커밋 | `6f7fb67` |
+| 대상 커밋 | `21888c7` |
 
 ## 현재 적용 상태
 
-대상은 `Interface/js`입니다. Docker/CI는 Node 22, package.json은 NestJS 11, TypeScript는 strict 설정입니다. build·lint·Jest 게이트가 있고 npm audit는 CI 미도입 규약입니다. 기준선 JobsService의 구체 어댑터 타입 및 fake 이중 단언은 T-008, HTTP drain보다 빠른 Redis 종료는 T-011의 미충족으로 추적합니다.
+대상은 `Interface/js`입니다. Docker/CI는 Node 22, package.json은 NestJS 11, TypeScript는 strict 설정입니다. build·lint·Prettier format:check·Jest 게이트가 있고 npm audit는 CI 미도입 규약입니다. JobsService는 기존 @Inject 토큰과 Pick으로 사용 메서드만 요구하며, 테스트의 어댑터 이중 단언을 제거했습니다. Redis는 HTTP drain 이후 onApplicationShutdown에서 닫습니다.
 
 yirang-taskforge의 `Interface/js`(NestJS 기반 REST API, TypeScript strict)에 적용하는 코딩 규약입니다. 원본 가이드라인 저장소(`basic-ai-agent-guideline`)에 JS/TS 규약이 없어 Go/Python 규약 문서의 형식·원칙(계층 분리, 소비자 측 인터페이스, 경계에서만 HTTP 변환, 툴체인 게이트)을 준용하여 신규 작성했습니다.
 
@@ -28,7 +28,8 @@ yirang-taskforge의 `Interface/js`(NestJS 기반 REST API, TypeScript strict)에
 - 필수 게이트(전부 통과해야 완료):
   - `npm run build` — `tsc` 컴파일 에러 0
   - `npm run lint` — ESLint(typescript-eslint) 에러 0
-  - `npm test` — Jest 단위 테스트
+  - `npm run format:check` — Prettier 검사
+  - `npm test` — Jest 서비스·readiness·shutdown 회귀
 - 포매터: Prettier (ESLint와 충돌 없는 구성, `eslint-config-prettier`).
 
 ## TypeScript 규칙 [핵심]
@@ -54,7 +55,7 @@ Interface/js/
 │   │   └── dto/             # 요청/응답 DTO (class-validator)
 │   ├── health/              # /healthz, /readyz
 │   └── infra/               # 인프라 어댑터: s3.service.ts, sqs.service.ts, redis.service.ts
-├── test/                    # Jest 서비스 단위 테스트
+├── test/                    # Jest 서비스·health·HTTP shutdown 회귀
 ├── package.json / tsconfig.json / eslint.config.mjs / .prettierrc
 └── Dockerfile
 ```
@@ -82,7 +83,7 @@ Interface/js/
 - DI는 생성자 주입만 사용합니다. `@Inject()` 토큰은 인프라 어댑터 교체 지점에만 사용합니다.
 - 예외는 도메인 계층에서 도메인 에러로 던지고, HTTP 변환(`HttpException`)은 컨트롤러/예외 필터에서만 수행합니다(서비스 계층에서 `HttpException` 금지 — Python 규약의 "HTTP 변환은 API 계층에서만"과 동일 원칙).
 - 응답은 시스템 공통 envelope `{success, data, error:{code,message}}`를 따릅니다.
-- graceful shutdown: `app.enableShutdownHooks()`를 켜고, 인프라 연결은 HTTP 요청 drain 이후에 정리합니다. Nest의 `OnModuleDestroy`는 HTTP close 이전이므로 Redis 종료에 사용하면 안 됩니다(T-011).
+- graceful shutdown: `app.enableShutdownHooks()`를 켜고, 인프라 연결은 HTTP 요청 drain 이후에 정리합니다. Nest의 `OnModuleDestroy`는 HTTP close 이전이므로 Redis 종료에는 `OnApplicationShutdown`을 사용합니다(T-011 완료).
 
 ## 비동기 규칙
 
@@ -126,7 +127,7 @@ Interface/js/
 
 ## 리뷰 체크리스트
 
-- [ ] `tsc`/`eslint`/`jest` 게이트 통과했는가?
+- [ ] `build`/`lint`/`format:check`/`jest` 게이트 통과했는가?
 - [ ] 계약 필드명(snake_case)이 [API 계약](../API.md)와 일치하는가?
 - [ ] 컨트롤러가 얇고 비즈니스 로직이 서비스에 있는가?
 - [ ] 외부 호출에 타임아웃이 있는가?
@@ -139,3 +140,4 @@ Interface/js/
 |---|---|---|
 | 초기 언어 가이드 적용판 | 이전 판 | 초기 작성 및 누적 검증 기록 |
 | 1.1.0 | 2026-11-07 | 기존 언어 규칙 유지, 실제 구조·도구 상태·미도입 요구 구분 및 잘못된 경로/API 정정 |
+| 1.2.0 | 2026-11-07 | Pick 주입·HTTP drain 이후 종료·Prettier 게이트와 테스트 범위 반영 |

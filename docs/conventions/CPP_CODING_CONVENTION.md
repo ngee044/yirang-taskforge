@@ -3,12 +3,12 @@
 | 항목 | 내용 |
 |---|---|
 | 문서 ID | YTF-CONV-001 |
-| 버전 | 1.1.0 |
+| 버전 | 1.2.0 |
 | 기준 표준 | C++23, 프로젝트 코드 규약 |
 | 작성일 | 2026-11-07 (현행화 판) |
 | 최종 수정일 | 2026-11-07 |
 | 상태 | Active — 사용자 승인 여부를 뜻하지 않음 |
-| 대상 커밋 | `6f7fb67` |
+| 대상 커밋 | `21888c7` |
 
 > 본 문서는 **CppToolkit 및 그 소비 애플리케이션에 실제로 적용된 관례를 추출·일반화한 규약**으로, yirang-taskforge의 `Main`(TaskForgeWorker)에 적용합니다. (`basic-ai-agent-guideline/cpp_guideline`에서 도입) 규약 자체(C++23, `.clang-format` 설정, 후행 반환 타입, `std::expected` 오류 규약과 외부 API 반환형, `#pragma once`, 명명 규칙 등)는 보편 규칙이므로 그대로 유지합니다. 새 코드는 본 문서를 따르고, 기존 코드를 수정할 때는 주변 코드의 스타일에 맞춥니다. 신규 규칙 제안은 PR 논의를 통해 본 문서를 갱신한 뒤 적용합니다.
 
@@ -66,7 +66,7 @@
 - `SpaceBeforeParens: ControlStatements` — `if (`, `for (`처럼 제어문 키워드 뒤에만 공백을 둡니다(함수 호출 `f(`에는 공백 없음).
 - `AccessModifierOffset: -4` — `public:`/`private:`는 한 단계 내어씁니다.
 - `AlignTrailingComments: Always` — 후행 주석을 정렬합니다.
-- 포매터의 표준 옵션은 사용 버전이 지원하는 `Standard: Latest`를 사용합니다. C++ 컴파일 표준은 계속 C++23입니다. 기준선의 `Standard: c++23` 파싱 실패는 T-002 시정 대상입니다.
+- 포매터의 표준 옵션은 사용 버전이 지원하는 `Standard: Latest`를 사용합니다. C++ 컴파일 표준은 계속 C++23입니다. `Standard: Latest`는 clang-format 19/22에서 검사했으며 T-002 파싱 실패를 해소했습니다.
 
 `.clang-format`은 프로젝트 루트(또는 서브모듈이 제공하는 것)를 그대로 사용합니다. 임의로 설정을 바꾸지 않습니다.
 
@@ -257,6 +257,75 @@ public:
 
 ---
 
+### 11.1 상주 잡 (Resident Jobs) — 이름 있는 멤버 함수 + 위임 람다
+
+스레드를 붙잡고 도는 **상주 잡**(주기 sweep, 소비 루프, watcher 등)은 다음 형태로 등록합니다.
+
+- **잡 본문은 소유 클래스의 protected 멤버 함수**로 두고 snake_case 이름을 붙입니다. 본문을 익명 람다 안에 직접 쓰지 않습니다. 잡을 별도 Job 서브클래스로 빼면 매니저의 상태(중단 플래그·설정·핸들)를 외부에 열어야 하므로, 상태 소유자와 잡 본문을 같은 클래스에 둡니다.
+- 잡 본문 함수의 **반환 타입은 Job 콜백 계약과 동일하게** 둡니다 — 이 규약에서는 §7.1의 `std::expected<void, std::string>`입니다(다른 체크아웃을 소비할 때는 실제 헤더의 반환 계약을 다시 확인합니다). 계약과 같으면 감싸는 람다가 `return 잡함수();` **한 줄 위임**이 됩니다.
+- `start()`가 `[this]` 캡처 람다로 감싸 push합니다. `ThreadPool::push`는 콜러블을 직접 받지 않으므로 항상 `std::make_shared<Thread::Job>(priority, callback, title)`로 감쌉니다.
+- **Job 제목 = 잡 함수명.** 로그의 `completed work <제목>`이 코드 지점을 1:1로 가리키게 합니다. 제목이 함수명과 다르면(예: 제목 `LeaseSweepWorker` vs 함수 `lease_sweep_job`) 로그→코드 추적이 끊어집니다.
+- 상주 잡의 우선순위는 `LongTerm`으로 하고, **잡 수만큼 전용 `LongTerm` 워커**를 pool 시작 전에 push합니다. 상주 잡은 주기 대기 중에도 워커를 점유하므로, `Normal`을 쓰면 같은 pool의 다른 `Normal` 잡이 영구히 굶습니다.
+- **워커 이름에 잡 함수명을 붙이지 않습니다.** JobPool은 우선순위로만 잡을 배분해 워커↔잡 짝이 고정되지 않습니다. 워커는 번호만 갖고(`sweep_worker_1` 등), 실행 주체 식별은 Job 제목이 담당합니다.
+- **push 헬퍼**(`push_<잡>_job()`)를 두어 `start()`와 재등록 꼬리가 같은 함수를 쓰게 합니다 — Job 제목↔본문 대응이 코드에 한 곳만 존재합니다.
+- 스레드를 점유하지 않는 일회성 통지 콜백(watcher의 `set_callback` 등)은 그대로 캡처 람다를 씁니다 — 이 규칙은 상주 잡에만 적용됩니다.
+
+반복 방식은 두 가지이며 **둘 다 정상 패턴**입니다. 잡의 성격으로 고릅니다.
+
+| 방식 | 대상 | 형태 |
+|------|------|------|
+| (A) `LongTerm` + `while` | consume·watcher 류 — 계속 대기·수신이 의도 | `while (running_)` 루프. 루프 안의 대기는 `sleep_for`가 아니라 `condition_variable::wait_for` + `running_` predicate — `stop()`이 즉시 깨울 수 있어야 합니다. **종료 순서는 반드시 `running_` 하강 → `notify_all` → `thread_pool_->stop()`** 입니다. `stop(true)`도 진행 중인 잡을 취소하지 못하므로(§11.2), 플래그를 먼저 내리지 않으면 `stop()`이 루프 종료를 기다리며 영구 블로킹합니다 |
+| (B) 자기 재등록 | 주기 sweep 류 — "한 주기 수행 → 대기 → 반복" | 루프문 없이 한 주기를 수행하고 대기한 뒤 **자신을 다시 push** |
+
+(B) 자기 재등록을 쓸 때의 규칙:
+
+- 함수 첫머리에서 `running_`을 검사해, 내려가 있으면 **재등록 없이 성공을 반환**합니다 — 잡이 자연히 소멸합니다.
+- **재등록은 반드시 대기 후에** 합니다. 순서를 뒤집으면 유휴 워커가 방금 push된 잡을 곧바로 집어 간격 없이 도는 hot loop가 됩니다.
+- 주기 대기는 `sleep_for`가 아니라 `condition_variable::wait_for` + `running_` predicate를 쓰는 전용 헬퍼(`wait_next_sweep` 등)로 묶습니다 — `stop()`의 `notify_all`이 즉시 깨웁니다.
+- 재등록도 대기가 잡 안에서 일어나므로 **대기 중에 워커가 해방되지 않습니다** — "잡 수만큼 워커" 규칙은 (A)/(B) 모두에 적용됩니다.
+- 재등록 push 실패는 `running_`으로 분기합니다. 종료 중(`stop()`이 JobPool을 잠근 뒤)의 실패는 정상이므로 조용히 넘기고, `running_`이 서 있는데 실패하면 그 잡이 영구 정지된 것이므로 반드시 `Error`로 남깁니다.
+- **자기 재등록 push는 `stop()`과 교착하지 않습니다(확정).** 현행 CppToolkit `ThreadPool::stop()`은 워커 목록을 뮤텍스 아래에서 스냅샷한 뒤 **락을 놓고 join**하고, `push(Job)`은 어떤 풀 뮤텍스도 잡지 않은 채 `JobPool`에 위임하며 `JobPool::push`도 통지 콜백 호출 전에 자기 락을 풉니다. 종료 중 재등록은 교착 대신 "잠김" 실패로 즉시 반환되므로 재등록 루프가 자연 종료됩니다(위의 `running_` 분기 규칙이 이 실패를 처리합니다).
+- **잡 본문에서 같은 풀의 `start()`/`stop()`/`remove_workers()` 호출을 금지합니다.** 다른 스레드의 `stop()`이 `lifecycle_mutex_`를 보유한 채 해당 잡을 join하면, 잡의 라이프사이클 호출이 뮤텍스를 기다려 교착할 수 있습니다. 자기 워커에 대한 stop/remove에는 self-join 위험도 있습니다. `start()`는 경합이 없으면 `already started`를 반환하며 join하지 않습니다. 호출 금지 규약과 실제 교착 조건을 구분합니다.
+- 위 동작은 이 프로젝트가 고정한 CppToolkit 체크아웃 기준입니다. 다른 세대의 stop/push에도 같은 잠금 순서가 있다고 추정하지 말고 헤더·구현을 다시 확인합니다.
+
+현재 앱은 (A) 패턴을 사용합니다. `Main/TaskForgeWorker.h:34`의 protected `dlq_backlog_monitor`, `Main/TaskForgeWorker.cpp:381`의 한 줄 위임과 동일 Job 제목, `:398`의 조건 변수 대기, `:188`의 플래그 하강·통지·종료 순서를 함께 확인합니다. 자기 재등록 패턴은 현재 앱에서 사용하지 않습니다.
+
+### 11.2 ThreadPool API 확정 사실 (CppToolkit)
+
+아래는 체크아웃 `a3392056bc9177b1fd5d94e57296f6b42718261c`의 CppToolkit `ThreadPool/` 헤더·구현으로 확인한 동작입니다. 근거는 `ThreadPool.cpp:51`, `:88`, `:265`, `JobPool.cpp:121`, `:180`, `Job.cpp:281`, `:286`, `ThreadWorker.cpp:211`입니다. 넘겨짚지 말고 이 표를 기준으로 사용하며, 프로젝트별 타겟명·반환 타입 매핑은 각 모듈의 `<모듈>/CMakeLists.txt`의 `set(LIBRARY_NAME …)`을 직접 확인합니다.
+
+**종료 (`stop`)**
+
+| 호출 | 대기 중인 잡 | 진행 중인 잡 | 반환 시점 |
+|------|-------------|-------------|-----------|
+| `stop(true)` | `clear()`로 폐기 | **취소되지 않음** | 모든 워커 `join()` 완료 후 |
+| `stop(false)`(기본값) | 워커가 전부 소진(드레인) | **취소되지 않음** | 모든 워커 `join()` 완료 후 |
+
+- 두 인자 모두 먼저 JobPool을 잠가 신규 push를 막습니다. 코드상 유일한 차이는 `clear()` 호출 여부입니다. `stop(false)`는 큐 잔량에 비례해 무한정 블로킹될 수 있습니다.
+- `stop()` 완료 시 잠금이 해제되므로 **정지된 풀에도 `push`는 성공**합니다(잡은 실행되지 않고 쌓입니다). 종료 후 push를 막으려면 `lock(true)`를 명시적으로 호출합니다.
+- `start()` 재호출은 `"already started"`, 미기동 상태의 `stop()`은 `"not started"`, 제거 대상 없는 `remove_workers()`는 실패로 반환됩니다. 소멸자가 `stop(true)`를 호출하므로, 명시적으로 `stop()`한 뒤 파괴하면 소멸자 쪽 실패는 조용히 무시됩니다. `stop()` 후 `start()` 재기동은 가능합니다.
+
+**push / 콜백 / 예외**
+
+- `push(std::shared_ptr<Job>)` → `std::expected<void, std::string>`. 실패 조건은 ① 풀의 JobPool이 null, ② `job`이 null, ③ JobPool이 잠김(=`stop()` 진행 중 또는 `lock(true)`), ④ 우선순위가 `Low`이고 `Low` 큐가 가득 찬 백프레셔(`Low`에만 적용)입니다. **기동 여부는 검사하지 않으므로** `start()` 이전 push도 유실 없이 처리됩니다.
+- `push(std::shared_ptr<ThreadWorker>)` → `void`이므로 검사 대상이 아닙니다(§7의 "expected를 버리지 않는다"에 걸리지 않음). null 워커는 경고 로그 후 무시되고, 이미 기동된 풀이면 그 자리에서 워커가 시작됩니다.
+- Job 콜백의 **인자 형태**는 4종(인자 없음 / `bool` / `const int&` / `const std::vector<uint8_t>&`)이며 반환형은 모두 `std::expected<void, std::string>`입니다. 생성자마다 하나만 설정됩니다. 넷 다 없으면 가상 `working()`이 불리는데 **기본 구현은 실패를 반환**하므로, 콜백 없이 만든 `Job`은 파생 클래스에서 `working()`을 재정의해야 합니다.
+- 잡 본문의 예외는 `Job::callback_safe_caller`와 `ThreadWorker::do_run`이 이중으로 포착해 `std::unexpected`/로그로 변환합니다. **잡의 예외로 워커 스레드가 죽는 경로는 코드상 없습니다.** 이는 안전망일 뿐이며, 신규 코드는 §7.3대로 예외를 던지지 않고 반환값으로 표현합니다.
+- 워커는 생성자에 넘긴 **우선순위 벡터의 나열 순서**대로 큐를 훑어 첫 비어있지 않은 큐에서 꺼냅니다(우선순위 간 = 벡터 순서, 우선순위 내 = FIFO). `LongTerm`은 스케줄러에서 특별 취급되지 않습니다 — §11.1의 "잡 수만큼 전용 `LongTerm` 워커" 규칙이 유일한 보호 장치입니다.
+
+**놓치기 쉬운 API**
+
+| API | 동작 | 주의 |
+|-----|------|------|
+| `pause(bool)` | 전 워커가 새 잡을 집지 않고 대기하며 잡은 큐에 쌓입니다 | 진행 중인 잡은 멈추지 않습니다 |
+| `lock(bool)` / `lock()` | 뮤텍스가 아니라 **push 게이트 플래그**입니다. `true`면 이후 모든 push가 실패합니다 | 이미 큐에 있는 잡·진행 중인 잡에는 영향이 없습니다. `stop()`이 내부적으로 사용합니다 |
+| `remove_workers(priority)` | 해당 우선순위 큐를 비우고, 각 워커에서 그 우선순위를 제거하며, 우선순위가 비게 된 워커만 join 후 제거하고 제거 수를 반환합니다 | 제거 대상이 없으면 실패로 반환되지만 **큐 clear와 우선순위 축소는 이미 수행된 뒤**입니다(부분 부작용) |
+| `uncompleted_jobs(folder)` | 메모리 큐가 아니라 **백업 폴더**를 스캔해 잡 파일의 원시 바이트를 읽고 원본 파일을 삭제합니다 | `Job` 복원은 호출자 책임입니다. `LongTerm`은 확장자 매핑이 없어 백업 대상이 아닙니다 |
+
+**워커를 만들었으면 그 우선순위로 push되는 잡이 있는지 확인합니다.** 우선순위별 워커 수를 설정으로 노출해 놓고 실제로는 한 우선순위에만 잡을 push하면, 나머지 워커는 영구 유휴 스레드가 됩니다(이 프로젝트의 과거 High/Normal/Low 유휴 워커는 T-009에서 제거했으며 현재 앱 풀은 DLQ 모니터용 LongTerm 1개만 생성).
+
+---
+
 ## 12. 문자열 포맷 / 로깅 (Formatting & Logging)
 
 - 문자열 조립은 **`std::format`** 을 사용합니다(`+` 연결, `sprintf` 금지).
@@ -316,7 +385,7 @@ CppToolkit 기반 프로젝트에서 신규/AI 개발자가 거의 항상 처음
 [아키텍처 적용 프로파일](../architecture/MSA_ARCHITECTURE.md)과 [API](../API.md)를 따릅니다. 다른 서비스의 내부 헤더를 직접 링크하지 않고 계약으로 연결합니다. 현재 브로커는 AWS SQS FIFO이며 RabbitMQ/Kafka를 도입했다고 가정하지 않습니다.
 
 - 메시지 중복 배달을 고려하고 idempotency와 재시도 상한을 검증합니다. FIFO dedup만으로 exactly-once를 주장하지 않습니다.
-- 모든 원격 호출에 timeout을 두어야 합니다. 워커 Redis API에 timeout 설정이 없는 기준선의 미충족은 [task_list](../task_list.md)에서 추적합니다.
+- 모든 원격 호출에 timeout을 두어야 합니다. 워커 Redis API에 timeout 설정이 없는 미충족은 [task_list](../task_list.md)에서 추적합니다.
 - 진행 중 처리를 drain한 뒤 의존성·스레드·Logger를 종료합니다. 시그널 핸들러에서는 Logger·mutex·객체 해제를 호출하지 않습니다.
 - 오류를 성공 반환으로 바꾸어 ACK하거나 상태 쓰기 실패를 숨기지 않습니다. expected의 성공/실패 의미를 소비자 API에서 확인합니다.
 - 새 trace/correlation envelope, heartbeat, circuit breaker는 현재 계약에 없습니다. 필요하면 요구·계약을 먼저 확정하며 구현된 기능처럼 기재하지 않습니다.
@@ -402,15 +471,19 @@ namespace TaskForge
 
 - [ ] `./build.sh`(또는 `cmake --build`) 성공, 컴파일/링크 에러 0(`vcpkg.json` 변경 시 의존성 재설치).
 - [ ] 변경 모듈의 `Samples/` 실행으로 동작 검증.
-- [ ] `clang-format -i` 적용됨(GNU/Tab/170, Allman 중괄호).
+- [ ] `clang-format -i` 적용 후 `--dry-run --Werror` 통과(GNU/Tab/170, Allman 중괄호, Latest). Main과 Tests의 변경 C++를 함께 검사합니다.
 - [ ] 명명 규칙 준수: 클래스/파일 PascalCase, 함수/변수 snake_case, 멤버 `_` 접미사.
 - [ ] 모든 함수/메서드가 후행 반환 타입(`auto ... -> T`), 빈 매개변수는 `(void)`.
 - [ ] getter/setter는 오버로드 패턴(`get_`/`set_` 접두사 없음), getter는 `const`.
-- [ ] 오류 규약 준수: 성공/실패만은 `std::expected<void, std::string>`, 데이터+실패는 `std::expected<T, std::string>`(외부 레거시 API는 실제 헤더 준수). 콜백은 `return {};` / `std::unexpected(...)`.
+- [ ] 오류 규약 준수: 성공/실패만은 `std::expected<void, std::string>`, 데이터+실패는 `std::expected<T, std::string>`(외부 레거시 API는 실제 헤더 준수). 콜백은 `return {};` / `std::unexpected(...)`. 반환된 expected를 검사 없이 버리지 않습니다.
 - [ ] `shared_ptr` 역참조 전 null 검사, 순환 참조는 `weak_ptr`로 차단.
 - [ ] 비동기/네트워크 경로에 예외 없음(예외 가능 지점은 `try/catch`로 감싸 반환값 변환).
 - [ ] 헤더 `#pragma once`, flat include(경로 접두어 없음), include 수동 정렬, 헤더에서 `using namespace` 없음.
 - [ ] 리소스 객체는 설정 → `start` → 사용 → `stop` → `reset` 순서(모듈별 종료 API 확인: ThreadPool은 `wait_stop` 없이 `stop()` 블로킹).
+- [ ] 상주 잡은 protected 멤버 본문·한 줄 위임·함수명과 같은 Job 제목·잡 수만큼 전용 LongTerm 워커를 사용합니다. 워커 이름으로 잡과 고정 짝을 가정하지 않습니다(§11.1).
+- [ ] while 패턴은 running 하강 → notify_all → pool.stop 순서이고 주기 대기는 condition_variable predicate를 사용합니다. 재등록 패턴은 대기 → push 순서이며 종료 중 실패와 실행 중 실패를 구분합니다.
+- [ ] 잡 본문에서 같은 풀의 start/stop/remove_workers를 호출하지 않습니다. stop(true/false) 어느 쪽도 실행 중 콜백을 강제 취소하지 않는다는 사실을 확인합니다(§11.2).
+- [ ] 실제 제출되는 잡이 없는 우선순위 워커·설정이 없는지 확인합니다.
 - [ ] 로깅은 `Logger` 싱글턴 + `std::format`, 적절한 `LogTypes` 레벨 사용.
 - [ ] CMake: 소스 명시 나열(GLOB 금지), 링크는 타겟명(§15.1), 새 외부 의존은 `find_package`/링크 타겟 매핑 일치.
 - [ ] 관련 ISO 문서(요구사항·설계·추적성 등) 갱신 필요 시 함께 갱신.
@@ -421,3 +494,4 @@ namespace TaskForge
 |---|---|---|
 | 초기 CppToolkit 적용판 | 이전 판 | 초기 작성 및 누적 검증 기록 |
 | 1.1.0 | 2026-11-07 | 기존 명명·포맷·수명주기 기준 유지; expected·Logger·ThreadPool 실제 API와 프로젝트 모듈 범위 정정 |
+| 1.2.0 | 2026-11-07 | 공통 원본 §11.1/11.2·부록B를 체크아웃 API로 검증해 전파, 상주 잡 종료·리뷰 기준 강화 |
