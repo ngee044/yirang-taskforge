@@ -8,15 +8,44 @@
 #include <boost/process/v2/stdio.hpp>
 
 #include <chrono>
+#include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <format>
 #include <fstream>
+#include <system_error>
+
+#include <unistd.h>
 
 using namespace Utilities;
 
 namespace
 {
 	constexpr size_t stdout_tail_bytes = 2048;
+
+	struct TaskProcessGroup
+	{
+		auto on_exec_setup(boost::process::v2::posix::default_launcher&, const boost::process::v2::filesystem::path&, const char* const*) -> boost::system::error_code
+		{
+			// 셸이 생성하는 자손도 같은 그룹에 두어 태스크 전체에 타임아웃을 적용한다.
+			if (::setpgid(0, 0) == -1)
+			{
+				return { errno, boost::system::system_category() };
+			}
+
+			// 워커의 sigwait용 차단 마스크를 실행 태스크에 전달하지 않는다.
+			sigset_t termination_signals;
+			sigemptyset(&termination_signals);
+			sigaddset(&termination_signals, SIGINT);
+			sigaddset(&termination_signals, SIGTERM);
+			if (::sigprocmask(SIG_UNBLOCK, &termination_signals, nullptr) == -1)
+			{
+				return { errno, boost::system::system_category() };
+			}
+
+			return {};
+		}
+	};
 }
 
 TaskExecutor::TaskExecutor(const std::vector<TaskDefinition>& whitelist, const std::string& root_path, int default_timeout_sec)
@@ -79,7 +108,7 @@ auto TaskExecutor::execute(const TaskDefinition& task,
 	{
 		boost::asio::io_context io_context;
 		boost::process::v2::process process(io_context, executable_path.string(), process_arguments,
-											boost::process::v2::process_stdio{ nullptr, stdout_file, stdout_file });
+											boost::process::v2::process_stdio{ nullptr, stdout_file, stdout_file }, TaskProcessGroup{});
 
 		boost::asio::steady_timer timeout_timer(io_context);
 		timeout_timer.expires_after(std::chrono::seconds(effective_timeout));
@@ -93,8 +122,13 @@ auto TaskExecutor::execute(const TaskDefinition& task,
 
 				result.timed_out = true;
 
-				boost::system::error_code ignored;
-				process.terminate(ignored);
+				if (::kill(-process.id(), SIGKILL) == -1 && errno != ESRCH)
+				{
+					Logger::handle().write(LogTypes::Warning,
+										   std::format("cannot terminate task group [{}]: {}", task.name, std::error_code(errno, std::generic_category()).message()));
+					boost::system::error_code ignored;
+					process.terminate(ignored);
+				}
 			});
 
 		process.async_wait(
