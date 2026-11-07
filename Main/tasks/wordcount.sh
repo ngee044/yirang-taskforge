@@ -2,6 +2,7 @@
 # usage: wordcount.sh <inputs_dir> <outputs_dir> [extra args...]
 # 각 입력 파일의 단어 수를 세어 <파일명>.wordcount.txt로 출력합니다.
 set -euo pipefail
+shopt -s dotglob nullglob
 
 inputs_dir="$1"
 outputs_dir="$2"

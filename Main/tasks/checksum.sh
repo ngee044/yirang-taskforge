@@ -2,6 +2,7 @@
 # usage: checksum.sh <inputs_dir> <outputs_dir> [extra args...]
 # 각 입력 파일의 SHA-256 체크섬을 계산해 <파일명>.sha256.txt로 출력합니다.
 set -euo pipefail
+shopt -s dotglob nullglob
 
 inputs_dir="$1"
 outputs_dir="$2"
