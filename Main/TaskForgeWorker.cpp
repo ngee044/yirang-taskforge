@@ -250,8 +250,8 @@ auto TaskForgeWorker::create_thread_pool(void) -> std::expected<void, std::strin
 
 auto TaskForgeWorker::connect_redis(void) -> std::expected<void, std::string>
 {
-	redis_client_ = std::make_shared<Redis::RedisClient>(configurations_->redis_host(), configurations_->redis_port(), Redis::TLSOptions(),
-														 configurations_->redis_db_index());
+	redis_client_
+		= std::make_shared<Redis::RedisClient>(configurations_->redis_host(), configurations_->redis_port(), Redis::TLSOptions(), configurations_->redis_db_index());
 
 	std::string last_error = "";
 	for (auto attempt = 1; attempt <= redis_connect_attempts; attempt++)
@@ -263,8 +263,7 @@ auto TaskForgeWorker::connect_redis(void) -> std::expected<void, std::string>
 			auto verified = redis_client_->set("taskforge:healthcheck", "ok", 5);
 			if (verified)
 			{
-				Logger::handle().write(LogTypes::Information,
-									   std::format("redis connected: {}:{}", configurations_->redis_host(), configurations_->redis_port()));
+				Logger::handle().write(LogTypes::Information, std::format("redis connected: {}:{}", configurations_->redis_host(), configurations_->redis_port()));
 
 				return {};
 			}
@@ -354,8 +353,7 @@ auto TaskForgeWorker::connect_aws_service(void) -> std::expected<void, std::stri
 
 	if (!configurations_->aws_access_key().empty())
 	{
-		sqs_consumer_ = std::make_unique<AWSService::AWSSQSConsumer>(configurations_->aws_access_key(), configurations_->aws_secret_key(), config,
-																	 consume_config);
+		sqs_consumer_ = std::make_unique<AWSService::AWSSQSConsumer>(configurations_->aws_access_key(), configurations_->aws_secret_key(), config, consume_config);
 	}
 	else
 	{
@@ -364,8 +362,16 @@ auto TaskForgeWorker::connect_aws_service(void) -> std::expected<void, std::stri
 
 	sqs_consumer_->sqs_url(configurations_->sqs_request_queue_url());
 
-	auto handler_registered = sqs_consumer_->register_consume_handler([this](const std::string& message_body) -> std::expected<void, std::string>
-																	  { return handle_message(message_body); });
+	auto handler_registered = sqs_consumer_->register_consume_handler(
+		[this](const std::string& message_body) -> std::expected<void, std::string>
+		{
+			auto handled = handle_message(message_body);
+			if (!handled)
+			{
+				Logger::handle().write(LogTypes::Error, std::format("message not acknowledged: {}", handled.error()));
+			}
+			return handled;
+		});
 	if (!handler_registered)
 	{
 		return std::unexpected(handler_registered.error());
@@ -390,24 +396,24 @@ auto TaskForgeWorker::connect_aws_service(void) -> std::expected<void, std::stri
 
 auto TaskForgeWorker::start_dlq_backlog_monitor(void) -> std::expected<void, std::string>
 {
-	return thread_pool_->push(std::make_shared<Job>(JobPriorities::LongTerm,
-													[this]() -> std::expected<void, std::string>
-													{
-														while (running_.load())
-														{
-															auto backlog = task_dlq_->pending_count();
-															if ((int)backlog >= configurations_->dlq_backlog_alert_count())
-															{
-																Logger::handle().write(LogTypes::Warning,
-																					   std::format("dlq backlog alert: {} entries pending", backlog));
-															}
+	return thread_pool_->push(std::make_shared<Job>(
+		JobPriorities::LongTerm,
+		[this]() -> std::expected<void, std::string>
+		{
+			while (running_.load())
+			{
+				auto backlog = task_dlq_->pending_count();
+				if ((int)backlog >= configurations_->dlq_backlog_alert_count())
+				{
+					Logger::handle().write(LogTypes::Warning, std::format("dlq backlog alert: {} entries pending", backlog));
+				}
 
-															std::this_thread::sleep_for(std::chrono::seconds(5));
-														}
+				std::this_thread::sleep_for(std::chrono::seconds(5));
+			}
 
-														return {};
-													},
-													"dlq_backlog_monitor"));
+			return {};
+		},
+		"dlq_backlog_monitor"));
 }
 
 auto TaskForgeWorker::handle_message(const std::string& message_body) -> std::expected<void, std::string>
@@ -450,24 +456,15 @@ auto TaskForgeWorker::handle_message(const std::string& message_body) -> std::ex
 			{
 				boost::json::object updates = contract_fields(message);
 				updates["failure_reason"] = validated.error();
-				set_job_status(job_id.c_str(), "failed", updates);
+				return set_job_status(job_id.c_str(), "failed", updates);
 			}
 		}
 
 		return {};
 	}
 
-	auto processed = process_job(message, message_body);
-	if (!processed)
-	{
-		std::string job_id = message.at("job_id").as_string().c_str();
-		Logger::handle().write(LogTypes::Error, std::format("job [{}] failed: {}", job_id, processed.error()));
-
-		handle_processing_failure(job_id, message_body, processed.error());
-	}
-
-	// 재시도는 DLQ 재발행으로 자체 관리하므로 원본 메시지는 항상 삭제합니다
-	return {};
+	// 상태 조회·저장 실패는 ACK를 보류해 SQS 재수신으로 복구한다.
+	return process_job(message, message_body);
 }
 
 auto TaskForgeWorker::process_job(const boost::json::object& message, const std::string& message_body) -> std::expected<void, std::string>
@@ -480,7 +477,12 @@ auto TaskForgeWorker::process_job(const boost::json::object& message, const std:
 
 	// SQS는 at-least-once이므로 이미 종결된 작업의 메시지가 재배달될 수 있다.
 	// 가드가 없으면 done → running → done으로 상태가 역행하고 태스크가 재실행된다 (FR-WRK-10, NFR-REL-01)
-	if (is_terminal_status(job_id))
+	auto terminal = is_terminal_status(job_id);
+	if (!terminal)
+	{
+		return std::unexpected(terminal.error());
+	}
+	if (terminal.value())
 	{
 		Logger::handle().write(LogTypes::Information, std::format("job [{}] already terminal: skipping redelivery", job_id));
 
@@ -493,19 +495,21 @@ auto TaskForgeWorker::process_job(const boost::json::object& message, const std:
 		// 화이트리스트 확인 전에 running을 기록하면 결정적 실패에도 상태가 오락가락한다.
 		// 미등록은 재시도해도 결과가 바뀌지 않는 결정적 실패이므로 DLQ 재발행 경로를 타지 않는다 —
 		// 그 경로의 백오프 대기는 소비 핸들러 안에서 일어나 워커 전체를 멈춘다 (FR-WRK-03)
-		fail_without_retry(job_id, message, std::format("task [{}] is not registered in the whitelist", task_name));
-
-		return {};
+		return fail_without_retry(job_id, message, std::format("task [{}] is not registered in the whitelist", task_name));
 	}
 
-	set_job_status(job_id, "running", contract_fields(message));
+	auto running_saved = set_job_status(job_id, "running", contract_fields(message));
+	if (!running_saved)
+	{
+		return std::unexpected(running_saved.error());
+	}
 
 	TempDirGuard temp_dir(job_id);
 
 	auto downloaded = download_inputs(message, temp_dir.inputs());
 	if (!downloaded)
 	{
-		return std::unexpected(downloaded.error());
+		return handle_processing_failure(job_id, message_body, downloaded.error());
 	}
 
 	std::vector<std::string> arguments;
@@ -526,12 +530,13 @@ auto TaskForgeWorker::process_job(const boost::json::object& message, const std:
 	auto executed = task_executor_->execute(definition.value(), arguments, temp_dir.inputs(), temp_dir.outputs(), temp_dir.stdout_log(), timeout_sec);
 	if (!executed)
 	{
-		return std::unexpected(executed.error());
+		return handle_processing_failure(job_id, message_body, executed.error());
 	}
 
 	if (executed.value().exit_code != 0)
 	{
-		return std::unexpected(std::format("task [{}] exited with code {}: {}", task_name, executed.value().exit_code, executed.value().stdout_tail));
+		return handle_processing_failure(job_id, message_body,
+										 std::format("task [{}] exited with code {}: {}", task_name, executed.value().exit_code, executed.value().stdout_tail));
 	}
 
 	std::string output_prefix = message.at("output_prefix").as_string().c_str();
@@ -539,7 +544,7 @@ auto TaskForgeWorker::process_job(const boost::json::object& message, const std:
 	auto uploaded = upload_outputs(output_prefix, temp_dir.outputs());
 	if (!uploaded)
 	{
-		return std::unexpected(uploaded.error());
+		return handle_processing_failure(job_id, message_body, uploaded.error());
 	}
 
 	boost::json::object done_updates = contract_fields(message);
@@ -548,13 +553,16 @@ auto TaskForgeWorker::process_job(const boost::json::object& message, const std:
 	done_updates["result_download_url"] = uploaded.value();
 	// 재시도 끝에 성공한 경우 이전 실패 흔적이 남아 클라이언트가 성공을 실패로 오독한다 (계약 C-1)
 	done_updates["failure_reason"] = nullptr;
-	set_job_status(job_id, "done", done_updates);
+	auto done_saved = set_job_status(job_id, "done", done_updates);
+	if (!done_saved)
+	{
+		return std::unexpected(done_saved.error());
+	}
 
 	// 성공으로 종결된 작업의 DLQ 항목을 정리하지 않으면 백로그 경보(FR-WRK-09)가 영구 오탐한다
 	task_dlq_->remove(job_id);
 
-	Logger::handle().write(LogTypes::Information, std::format("job [{}] done: task={}, outputs={}", job_id, task_name, uploaded.value().size()),
-						   chrono_begin);
+	Logger::handle().write(LogTypes::Information, std::format("job [{}] done: task={}, outputs={}", job_id, task_name, uploaded.value().size()), chrono_begin);
 
 	return {};
 }
@@ -581,8 +589,7 @@ auto TaskForgeWorker::download_inputs(const boost::json::object& message, const 
 			}
 
 			last_error = downloaded.error();
-			Logger::handle().write(LogTypes::Warning,
-								   std::format("s3 download attempt {}/{} failed [{}]: {}", attempt, s3_download_attempts, object_key, last_error));
+			Logger::handle().write(LogTypes::Warning, std::format("s3 download attempt {}/{} failed [{}]: {}", attempt, s3_download_attempts, object_key, last_error));
 			std::this_thread::sleep_for(backoff_with_jitter(attempt, download_base_delay_ms, download_max_delay_ms));
 		}
 
@@ -610,8 +617,8 @@ auto TaskForgeWorker::upload_outputs(const std::string& output_prefix, const std
 		auto filename = entry.path().filename().string();
 		auto object_key = std::format("{}{}", output_prefix, filename);
 
-		auto uploaded = s3_client_->upload_file(Aws::String(configurations_->s3_bucket().c_str()), Aws::String(object_key.c_str()),
-												Aws::String(entry.path().string().c_str()));
+		auto uploaded
+			= s3_client_->upload_file(Aws::String(configurations_->s3_bucket().c_str()), Aws::String(object_key.c_str()), Aws::String(entry.path().string().c_str()));
 		if (!uploaded)
 		{
 			return std::unexpected(std::format("cannot upload output [{}]: {}", filename, uploaded.error()));
@@ -639,20 +646,26 @@ auto TaskForgeWorker::upload_outputs(const std::string& output_prefix, const std
 	return results;
 }
 
-auto TaskForgeWorker::fail_without_retry(const std::string& job_id, const boost::json::object& message, const std::string& reason) -> void
+auto TaskForgeWorker::fail_without_retry(const std::string& job_id, const boost::json::object& message, const std::string& reason) -> std::expected<void, std::string>
 {
 	Logger::handle().write(LogTypes::Error, std::format("job [{}] failed without retry: {}", job_id, reason));
 
 	boost::json::object updates = contract_fields(message);
 	updates["failure_reason"] = reason;
-	set_job_status(job_id, "failed", updates);
+	auto saved = set_job_status(job_id, "failed", updates);
+	if (!saved)
+	{
+		return std::unexpected(saved.error());
+	}
 
 	// 이전 재시도 흔적이 남아 있으면 백로그 경보(FR-WRK-09)가 오탐한다
 	task_dlq_->remove(job_id);
+	return {};
 }
 
-auto TaskForgeWorker::handle_processing_failure(const std::string& job_id, const std::string& message_body, const std::string& reason) -> void
+auto TaskForgeWorker::handle_processing_failure(const std::string& job_id, const std::string& message_body, const std::string& reason) -> std::expected<void, std::string>
 {
+	Logger::handle().write(LogTypes::Error, std::format("job [{}] failed: {}", job_id, reason));
 	boost::json::object republish;
 	try
 	{
@@ -677,11 +690,7 @@ auto TaskForgeWorker::handle_processing_failure(const std::string& job_id, const
 	{
 		Logger::handle().write(LogTypes::Error, std::format("cannot record dlq entry [{}]: {}", job_id, recorded.error()));
 
-		boost::json::object updates = contract_fields(republish);
-		updates["failure_reason"] = reason;
-		set_job_status(job_id, "failed", updates);
-
-		return;
+		return fail_without_retry(job_id, republish, reason);
 	}
 
 	int try_count = recorded.value();
@@ -689,14 +698,16 @@ auto TaskForgeWorker::handle_processing_failure(const std::string& job_id, const
 	{
 		Logger::handle().write(LogTypes::Warning, std::format("job [{}] gave up after {} attempts", job_id, try_count));
 
-		task_dlq_->remove(job_id);
-
 		boost::json::object updates = contract_fields(republish);
 		updates["failure_reason"] = reason;
 		updates["retry_count"] = try_count;
-		set_job_status(job_id, "failed", updates);
-
-		return;
+		auto saved = set_job_status(job_id, "failed", updates);
+		if (!saved)
+		{
+			return std::unexpected(saved.error());
+		}
+		task_dlq_->remove(job_id);
+		return {};
 	}
 
 	republish["dlq_try_count"] = try_count;
@@ -706,48 +717,73 @@ auto TaskForgeWorker::handle_processing_failure(const std::string& job_id, const
 	// 재발행하면 재시도 4회가 수 밀리초에 소진되어 재시도 자체가 무의미해진다
 	auto backoff = backoff_with_jitter(try_count, retry_base_delay_ms, retry_max_delay_ms);
 	Logger::handle().write(LogTypes::Information,
-						   std::format("job [{}] retry backoff {}ms before requeue {}/{}", job_id, backoff.count(), try_count,
-									   configurations_->dlq_max_retry_count()));
+						   std::format("job [{}] retry backoff {}ms before requeue {}/{}", job_id, backoff.count(), try_count, configurations_->dlq_max_retry_count()));
 	std::this_thread::sleep_for(backoff);
 
-	auto republished = sqs_publisher_->send_message(Aws::String(boost::json::serialize(republish).c_str()),
-													Aws::String(configurations_->sqs_message_group_id().c_str()),
+	boost::json::object updates = contract_fields(republish);
+	updates["failure_reason"] = reason;
+	updates["retry_count"] = try_count;
+	auto queued_saved = set_job_status(job_id, "queued", updates);
+	if (!queued_saved)
+	{
+		return std::unexpected(queued_saved.error());
+	}
+
+	auto republished = sqs_publisher_->send_message(Aws::String(boost::json::serialize(republish).c_str()), Aws::String(configurations_->sqs_message_group_id().c_str()),
 													Aws::String(std::format("{}-retry-{}", job_id, try_count).c_str()));
 	if (!republished)
 	{
 		Logger::handle().write(LogTypes::Error, std::format("cannot republish job [{}] for retry: {}", job_id, republished.error()));
 
-		// 여기서 failed로 확정되고 원본 메시지도 이미 삭제되므로, 남은 DLQ 항목은 어떤 경로로도
-		// 제거되지 않는 고아가 되어 백로그 경보(FR-WRK-09)를 영구 오탐시킨다
-		task_dlq_->remove(job_id);
-
-		boost::json::object updates = contract_fields(republish);
 		updates["failure_reason"] = std::format("{} (republish failed: {})", reason, republished.error());
-		updates["retry_count"] = try_count;
-		set_job_status(job_id, "failed", updates);
-
-		return;
+		auto saved = set_job_status(job_id, "failed", updates);
+		if (!saved)
+		{
+			return std::unexpected(saved.error());
+		}
+		task_dlq_->remove(job_id);
+		return {};
 	}
 
 	Logger::handle().write(LogTypes::Information, std::format("job [{}] requeued for retry {}/{}", job_id, try_count, configurations_->dlq_max_retry_count()));
 
-	boost::json::object updates = contract_fields(republish);
-	updates["failure_reason"] = reason;
-	updates["retry_count"] = try_count;
-	set_job_status(job_id, "queued", updates);
+	return {};
 }
 
-auto TaskForgeWorker::set_job_status(const std::string& job_id, const std::string& status, const boost::json::object& updates) -> void
+auto TaskForgeWorker::read_job_status(const std::string& job_id) -> std::expected<std::optional<std::string>, std::string>
+{
+	// RedisClient::get은 키 부재와 통신 오류를 모두 unexpected로 반환한다.
+	// transaction의 optional 응답으로 구분해야 장애를 빈 상태 문서로 오인하지 않는다.
+	auto replies = redis_client_->transaction_functions([&job_id](const std::shared_ptr<sw::redis::Transaction>& transaction) { transaction->get(job_id); });
+	if (!replies)
+	{
+		return std::unexpected(std::format("cannot read job status [{}]: {}", job_id, replies.error()));
+	}
+	try
+	{
+		return replies.value().get<sw::redis::OptionalString>(0);
+	}
+	catch (const sw::redis::Error& error)
+	{
+		return std::unexpected(std::format("cannot decode job status [{}]: {}", job_id, error.what()));
+	}
+}
+
+auto TaskForgeWorker::set_job_status(const std::string& job_id, const std::string& status, const boost::json::object& updates) -> std::expected<void, std::string>
 {
 	boost::json::object document;
 
 	// 기존 상태 JSON을 읽어 필드를 병합합니다 (없으면 새로 생성)
-	auto existing = redis_client_->get(job_id);
-	if (existing)
+	auto existing = read_job_status(job_id);
+	if (!existing)
+	{
+		return std::unexpected(existing.error());
+	}
+	if (existing.value().has_value())
 	{
 		try
 		{
-			auto parsed = boost::json::parse(existing.value());
+			auto parsed = boost::json::parse(existing.value().value());
 			if (parsed.is_object())
 			{
 				document = parsed.as_object();
@@ -778,21 +814,26 @@ auto TaskForgeWorker::set_job_status(const std::string& job_id, const std::strin
 	auto saved = redis_client_->set(job_id, boost::json::serialize(document), configurations_->redis_ttl_sec());
 	if (!saved)
 	{
-		Logger::handle().write(LogTypes::Error, std::format("cannot save job status [{}={}]: {}", job_id, status, saved.error()));
+		return std::unexpected(std::format("cannot save job status [{}={}]: {}", job_id, status, saved.error()));
 	}
+	return {};
 }
 
-auto TaskForgeWorker::is_terminal_status(const std::string& job_id) -> bool
+auto TaskForgeWorker::is_terminal_status(const std::string& job_id) -> std::expected<bool, std::string>
 {
-	auto existing = redis_client_->get(job_id);
+	auto existing = read_job_status(job_id);
 	if (!existing)
+	{
+		return std::unexpected(existing.error());
+	}
+	if (!existing.value().has_value())
 	{
 		return false;
 	}
 
 	try
 	{
-		auto parsed = boost::json::parse(existing.value());
+		auto parsed = boost::json::parse(existing.value().value());
 		if (!parsed.is_object())
 		{
 			return false;

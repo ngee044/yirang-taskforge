@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <future>
 #include <memory>
+#include <optional>
 #include <string>
 
 class TaskForgeWorker : public std::enable_shared_from_this<TaskForgeWorker>
@@ -41,10 +42,11 @@ private:
 	auto process_job(const boost::json::object& message, const std::string& message_body) -> std::expected<void, std::string>;
 	auto download_inputs(const boost::json::object& message, const std::filesystem::path& inputs_dir) -> std::expected<void, std::string>;
 	auto upload_outputs(const std::string& output_prefix, const std::filesystem::path& outputs_dir) -> std::expected<boost::json::array, std::string>;
-	auto handle_processing_failure(const std::string& job_id, const std::string& message_body, const std::string& reason) -> void;
-	auto fail_without_retry(const std::string& job_id, const boost::json::object& message, const std::string& reason) -> void;
-	auto set_job_status(const std::string& job_id, const std::string& status, const boost::json::object& updates) -> void;
-	auto is_terminal_status(const std::string& job_id) -> bool;
+	auto handle_processing_failure(const std::string& job_id, const std::string& message_body, const std::string& reason) -> std::expected<void, std::string>;
+	auto fail_without_retry(const std::string& job_id, const boost::json::object& message, const std::string& reason) -> std::expected<void, std::string>;
+	auto read_job_status(const std::string& job_id) -> std::expected<std::optional<std::string>, std::string>;
+	auto set_job_status(const std::string& job_id, const std::string& status, const boost::json::object& updates) -> std::expected<void, std::string>;
+	auto is_terminal_status(const std::string& job_id) -> std::expected<bool, std::string>;
 
 	std::shared_ptr<Configurations> configurations_;
 	std::shared_ptr<Thread::ThreadPool> thread_pool_;
