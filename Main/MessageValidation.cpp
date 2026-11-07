@@ -15,10 +15,12 @@ auto MessageValidation::is_valid_job_id(std::string_view job_id) -> bool
 		return false;
 	}
 
-	return std::all_of(job_id.begin(), job_id.end(), [](char character) {
-		return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9')
-			   || character == '-' || character == '_';
-	});
+	return std::all_of(job_id.begin(), job_id.end(),
+					   [](char character)
+					   {
+						   return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9')
+								  || character == '-' || character == '_';
+					   });
 }
 
 auto MessageValidation::validate_request(const boost::json::object& message) -> std::expected<void, std::string>
