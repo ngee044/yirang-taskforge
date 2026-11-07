@@ -31,10 +31,6 @@ public:
 	auto write_interval(void) const -> uint16_t;
 	auto log_root_path(void) const -> std::string;
 
-	auto high_priority_count(void) const -> int;
-	auto normal_priority_count(void) const -> int;
-	auto low_priority_count(void) const -> int;
-
 	auto redis_host(void) const -> std::string;
 	auto redis_port(void) const -> int;
 	auto redis_db_index(void) const -> int;
@@ -74,10 +70,6 @@ private:
 	int write_console_log_;
 	int write_interval_;
 	std::string log_root_path_;
-
-	int high_priority_count_;
-	int normal_priority_count_;
-	int low_priority_count_;
 
 	std::string redis_host_;
 	int redis_port_;

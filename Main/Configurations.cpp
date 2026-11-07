@@ -19,9 +19,6 @@ Configurations::Configurations(const ArgumentParser& arguments)
 	, write_console_log_((int)LogTypes::Information)
 	, write_interval_(1000)
 	, log_root_path_("")
-	, high_priority_count_(1)
-	, normal_priority_count_(2)
-	, low_priority_count_(1)
 	, redis_host_("127.0.0.1")
 	, redis_port_(6379)
 	, redis_db_index_(0)
@@ -72,12 +69,6 @@ auto Configurations::write_console_log(void) const -> LogTypes { return (LogType
 auto Configurations::write_interval(void) const -> uint16_t { return (uint16_t)write_interval_; }
 
 auto Configurations::log_root_path(void) const -> std::string { return log_root_path_; }
-
-auto Configurations::high_priority_count(void) const -> int { return high_priority_count_; }
-
-auto Configurations::normal_priority_count(void) const -> int { return normal_priority_count_; }
-
-auto Configurations::low_priority_count(void) const -> int { return low_priority_count_; }
 
 auto Configurations::redis_host(void) const -> std::string { return redis_host_; }
 
@@ -203,10 +194,6 @@ auto Configurations::load(void) -> void
 	read_int("write_console_log", write_console_log_);
 	read_int("write_interval", write_interval_);
 	read_string("log_root_path", log_root_path_);
-
-	read_int("high_priority_count", high_priority_count_);
-	read_int("normal_priority_count", normal_priority_count_);
-	read_int("low_priority_count", low_priority_count_);
 
 	read_string("redis_host", redis_host_);
 	read_int("redis_port", redis_port_);
@@ -353,20 +340,5 @@ auto Configurations::validate_configuration(void) -> void
 	if (default_timeout_sec_ <= 0)
 	{
 		default_timeout_sec_ = 30;
-	}
-
-	if (high_priority_count_ < 0)
-	{
-		high_priority_count_ = 1;
-	}
-
-	if (normal_priority_count_ < 0)
-	{
-		normal_priority_count_ = 2;
-	}
-
-	if (low_priority_count_ < 0)
-	{
-		low_priority_count_ = 1;
 	}
 }

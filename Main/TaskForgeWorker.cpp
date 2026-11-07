@@ -132,7 +132,6 @@ TaskForgeWorker::TaskForgeWorker(std::shared_ptr<Configurations> configurations)
 	, task_executor_(nullptr)
 	, task_dlq_(nullptr)
 	, running_(false)
-	, stop_future_(stop_promise_.get_future())
 {
 }
 
@@ -188,11 +187,15 @@ auto TaskForgeWorker::start(void) -> std::expected<void, std::string>
 
 auto TaskForgeWorker::stop(void) -> void
 {
-	bool expected = true;
-	if (!running_.compare_exchange_strong(expected, false))
 	{
-		return;
+		std::scoped_lock<std::mutex> lock(stop_mutex_);
+		bool expected = true;
+		if (!running_.compare_exchange_strong(expected, false))
+		{
+			return;
+		}
 	}
+	stop_condition_.notify_all();
 
 	if (sqs_consumer_ != nullptr)
 	{
@@ -216,33 +219,14 @@ auto TaskForgeWorker::stop(void) -> void
 		redis_client_.reset();
 	}
 
-	stop_promise_.set_value();
-
 	Logger::handle().write(LogTypes::Information, "TaskForgeWorker stopped");
 }
-
-auto TaskForgeWorker::wait_stop(void) -> void { stop_future_.wait(); }
 
 auto TaskForgeWorker::create_thread_pool(void) -> std::expected<void, std::string>
 {
 	thread_pool_ = std::make_shared<ThreadPool>("TaskForgeWorkerPool");
 
-	for (auto i = 0; i < configurations_->high_priority_count(); i++)
-	{
-		thread_pool_->push(std::make_shared<ThreadWorker>(std::vector<JobPriorities>{ JobPriorities::High }));
-	}
-
-	for (auto i = 0; i < configurations_->normal_priority_count(); i++)
-	{
-		thread_pool_->push(std::make_shared<ThreadWorker>(std::vector<JobPriorities>{ JobPriorities::Normal, JobPriorities::High }));
-	}
-
-	for (auto i = 0; i < configurations_->low_priority_count(); i++)
-	{
-		thread_pool_->push(std::make_shared<ThreadWorker>(std::vector<JobPriorities>{ JobPriorities::Low, JobPriorities::Normal }));
-	}
-
-	// DLQ 백로그 모니터 전용 워커 (장기 실행 루프와 일반 작업을 격리)
+	// SQS 소비는 SDK가 소유하며 이 풀은 DLQ 모니터만 실행합니다.
 	thread_pool_->push(std::make_shared<ThreadWorker>(std::vector<JobPriorities>{ JobPriorities::LongTerm }));
 
 	return thread_pool_->start();
@@ -396,24 +380,25 @@ auto TaskForgeWorker::connect_aws_service(void) -> std::expected<void, std::stri
 
 auto TaskForgeWorker::start_dlq_backlog_monitor(void) -> std::expected<void, std::string>
 {
-	return thread_pool_->push(std::make_shared<Job>(
-		JobPriorities::LongTerm,
-		[this]() -> std::expected<void, std::string>
+	return thread_pool_->push(
+		std::make_shared<Job>(JobPriorities::LongTerm, [this]() -> std::expected<void, std::string> { return dlq_backlog_monitor(); }, "dlq_backlog_monitor"));
+}
+
+auto TaskForgeWorker::dlq_backlog_monitor(void) -> std::expected<void, std::string>
+{
+	while (running_.load())
+	{
+		auto backlog = task_dlq_->pending_count();
+		if ((int)backlog >= configurations_->dlq_backlog_alert_count())
 		{
-			while (running_.load())
-			{
-				auto backlog = task_dlq_->pending_count();
-				if ((int)backlog >= configurations_->dlq_backlog_alert_count())
-				{
-					Logger::handle().write(LogTypes::Warning, std::format("dlq backlog alert: {} entries pending", backlog));
-				}
+			Logger::handle().write(LogTypes::Warning, std::format("dlq backlog alert: {} entries pending", backlog));
+		}
 
-				std::this_thread::sleep_for(std::chrono::seconds(5));
-			}
+		std::unique_lock<std::mutex> lock(stop_mutex_);
+		stop_condition_.wait_for(lock, std::chrono::seconds(5), [this]() { return !running_.load(); });
+	}
 
-			return {};
-		},
-		"dlq_backlog_monitor"));
+	return {};
 }
 
 auto TaskForgeWorker::handle_message(const std::string& message_body) -> std::expected<void, std::string>

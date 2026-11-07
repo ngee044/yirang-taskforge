@@ -13,14 +13,15 @@
 #include <boost/json.hpp>
 
 #include <atomic>
+#include <condition_variable>
 #include <expected>
 #include <filesystem>
-#include <future>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 
-class TaskForgeWorker : public std::enable_shared_from_this<TaskForgeWorker>
+class TaskForgeWorker
 {
 public:
 	TaskForgeWorker(std::shared_ptr<Configurations> configurations);
@@ -28,7 +29,9 @@ public:
 
 	auto start(void) -> std::expected<void, std::string>;
 	auto stop(void) -> void;
-	auto wait_stop(void) -> void;
+
+protected:
+	auto dlq_backlog_monitor(void) -> std::expected<void, std::string>;
 
 private:
 	auto create_thread_pool(void) -> std::expected<void, std::string>;
@@ -58,6 +61,6 @@ private:
 	std::unique_ptr<TaskDLQ> task_dlq_;
 
 	std::atomic<bool> running_;
-	std::promise<void> stop_promise_;
-	std::future<void> stop_future_;
+	std::mutex stop_mutex_;
+	std::condition_variable stop_condition_;
 };
