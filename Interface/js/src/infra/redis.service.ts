@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
@@ -7,7 +7,7 @@ import { REDIS_COMMAND_TIMEOUT_MS } from './timeouts';
 
 // Redis 상태 조회/기록 어댑터.
 @Injectable()
-export class RedisService implements OnModuleDestroy {
+export class RedisService implements OnApplicationShutdown {
   private readonly client: Redis;
   private readonly logger = new Logger(RedisService.name);
 
@@ -45,7 +45,8 @@ export class RedisService implements OnModuleDestroy {
     await this.client.ping();
   }
 
-  async onModuleDestroy(): Promise<void> {
+  // Nest가 HTTP 연결을 닫고 진행 중 요청을 마친 뒤 Redis를 정리합니다.
+  async onApplicationShutdown(): Promise<void> {
     await this.client.quit();
   }
 }
