@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -42,7 +43,8 @@ func (h *HealthHandler) Readiness(c *gin.Context) {
 	ready := true
 	for name, probe := range h.probes {
 		if err := probe.Ping(ctx); err != nil {
-			checks[name] = err.Error()
+			slog.Warn("readiness check failed", "dependency", name, "error", err)
+			checks[name] = "unavailable"
 			ready = false
 			continue
 		}

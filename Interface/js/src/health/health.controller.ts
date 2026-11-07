@@ -1,4 +1,4 @@
-import { Controller, Get, Res } from '@nestjs/common';
+import { Controller, Get, Inject, Logger, Res } from '@nestjs/common';
 import { Response } from 'express';
 
 import { RedisService } from '../infra/redis.service';
@@ -10,11 +10,12 @@ const READINESS_TIMEOUT_MS = 3000;
 @Controller()
 export class HealthController {
   private readonly startedAt = Date.now();
+  private readonly logger = new Logger(HealthController.name);
 
   constructor(
-    private readonly redis: RedisService,
-    private readonly sqs: SqsService,
-    private readonly s3: S3Service,
+    @Inject(RedisService) private readonly redis: Pick<RedisService, 'ping'>,
+    @Inject(SqsService) private readonly sqs: Pick<SqsService, 'ping'>,
+    @Inject(S3Service) private readonly s3: Pick<S3Service, 'ping'>,
   ) {}
 
   @Get('healthz')
@@ -35,17 +36,19 @@ export class HealthController {
     ];
 
     const checks: Record<string, string> = {};
-    let ready = true;
-    for (const [name, probe] of probes) {
-      try {
-        await withTimeout(probe(), READINESS_TIMEOUT_MS);
-        checks[name] = 'ok';
-      } catch (error) {
-        checks[name] = error instanceof Error ? error.message : String(error);
-        ready = false;
-      }
-    }
+    await Promise.all(
+      probes.map(async ([name, probe]) => {
+        try {
+          await withTimeout(probe(), READINESS_TIMEOUT_MS);
+          checks[name] = 'ok';
+        } catch (error) {
+          this.logger.warn(`readiness check ${name} failed: ${String(error)}`);
+          checks[name] = 'unavailable';
+        }
+      }),
+    );
 
+    const ready = Object.values(checks).every((value) => value === 'ok');
     response.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', checks });
   }
 }
