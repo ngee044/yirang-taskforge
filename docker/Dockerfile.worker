@@ -49,7 +49,8 @@ RUN cmake -S . -B build -G Ninja \
         -DVCPKG_TARGET_TRIPLET="$(cat /vcpkg_triplet)" \
         -DCMAKE_CXX_FLAGS="-include cstring" \
         -DBUILD_SHARED_LIBS=OFF \
-    && cmake --build build -j"$(nproc)"
+    && cmake --build build -j"$(nproc)" \
+    && ctest --test-dir build --output-on-failure
 
 FROM ubuntu:24.04 AS runtime
 

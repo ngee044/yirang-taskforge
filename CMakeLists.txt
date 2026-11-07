@@ -10,6 +10,8 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
 project(${PROGRAM_NAME} VERSION 1.0.0.0)
 
+include(CTest)
+
 if(APPLE AND NOT CMAKE_CROSSCOMPILING)
     list(APPEND CMAKE_PREFIX_PATH /usr/local /opt/homebrew)
 endif()
@@ -28,3 +30,7 @@ set(BUILD_SAMPLES OFF CACHE BOOL "Build samples")
 
 add_subdirectory(.CppToolkit)
 add_subdirectory(Main)
+
+if(BUILD_TESTING)
+    add_subdirectory(Tests)
+endif()
