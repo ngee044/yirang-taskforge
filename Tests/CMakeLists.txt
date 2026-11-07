@@ -1,4 +1,4 @@
-find_package(Boost REQUIRED COMPONENTS json filesystem system process)
+find_package(Boost CONFIG REQUIRED COMPONENTS json filesystem system process)
 
 add_executable(TaskForgeCoreTests
     CoreTests.cpp
