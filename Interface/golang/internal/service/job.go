@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/ngee044/yirang-taskforge/Interface/golang/internal/repository/redisrepo"
 )
 
 // ErrNotFound is returned when a job or catalog document does not exist.
@@ -29,7 +27,7 @@ type QueueProducer interface {
 
 // StatusStore reads/writes job status documents.
 type StatusStore interface {
-	Get(ctx context.Context, key string) (string, error)
+	Get(ctx context.Context, key string) (value string, found bool, err error)
 	Set(ctx context.Context, key, value string, ttl time.Duration) error
 }
 
@@ -163,12 +161,12 @@ func (s *JobService) CreateJob(ctx context.Context, in CreateJobInput) (*CreateJ
 
 // GetJob returns the raw status document stored by the worker.
 func (s *JobService) GetJob(ctx context.Context, jobID string) (json.RawMessage, error) {
-	value, err := s.store.Get(ctx, jobID)
-	if errors.Is(err, redisrepo.ErrNotFound) {
-		return nil, ErrNotFound
-	}
+	value, found, err := s.store.Get(ctx, jobID)
 	if err != nil {
 		return nil, err
+	}
+	if !found {
+		return nil, ErrNotFound
 	}
 
 	if !json.Valid([]byte(value)) {
@@ -179,12 +177,12 @@ func (s *JobService) GetJob(ctx context.Context, jobID string) (json.RawMessage,
 
 // GetTaskCatalog returns the whitelist catalog uploaded by the worker.
 func (s *JobService) GetTaskCatalog(ctx context.Context) (json.RawMessage, error) {
-	value, err := s.store.Get(ctx, "task_catalog")
-	if errors.Is(err, redisrepo.ErrNotFound) {
-		return nil, ErrNotFound
-	}
+	value, found, err := s.store.Get(ctx, "task_catalog")
 	if err != nil {
 		return nil, err
+	}
+	if !found {
+		return nil, ErrNotFound
 	}
 
 	if !json.Valid([]byte(value)) {

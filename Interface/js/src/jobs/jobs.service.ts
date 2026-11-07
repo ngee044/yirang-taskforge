@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -41,9 +41,9 @@ export class JobsService {
   private readonly messageGroupId: string;
 
   constructor(
-    private readonly s3: S3Service,
-    private readonly sqs: SqsService,
-    private readonly redis: RedisService,
+    @Inject(S3Service) private readonly s3: Pick<S3Service, 'bucket' | 'presignPut'>,
+    @Inject(SqsService) private readonly sqs: Pick<SqsService, 'enqueue'>,
+    @Inject(RedisService) private readonly redis: Pick<RedisService, 'get' | 'set'>,
     config: ConfigService<AppConfig, true>,
   ) {
     this.statusTtlSec = config.get('redisTtlSec', { infer: true });

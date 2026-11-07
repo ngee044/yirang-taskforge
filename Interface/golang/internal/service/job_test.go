@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ngee044/yirang-taskforge/Interface/golang/internal/repository/redisrepo"
 )
 
 type fakeS3 struct {
@@ -26,9 +25,13 @@ type fakeQueue struct {
 	bodies []string
 	groups []string
 	err    error
+	calls  *[]string
 }
 
 func (f *fakeQueue) Enqueue(_ context.Context, body, group string) error {
+	if f.calls != nil {
+		*f.calls = append(*f.calls, "enqueue")
+	}
 	if f.err != nil {
 		return f.err
 	}
@@ -39,24 +42,31 @@ func (f *fakeQueue) Enqueue(_ context.Context, body, group string) error {
 
 type fakeStore struct {
 	values map[string]string
-	order  []string
+	getErr error
+	setErr error
+	calls  *[]string
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{values: map[string]string{}}
 }
 
-func (f *fakeStore) Get(_ context.Context, key string) (string, error) {
-	value, ok := f.values[key]
-	if !ok {
-		return "", redisrepo.ErrNotFound
+func (f *fakeStore) Get(_ context.Context, key string) (string, bool, error) {
+	if f.getErr != nil {
+		return "", false, f.getErr
 	}
-	return value, nil
+	value, ok := f.values[key]
+	return value, ok, nil
 }
 
 func (f *fakeStore) Set(_ context.Context, key, value string, _ time.Duration) error {
+	if f.calls != nil {
+		*f.calls = append(*f.calls, "set")
+	}
+	if f.setErr != nil {
+		return f.setErr
+	}
 	f.values[key] = value
-	f.order = append(f.order, key)
 	return nil
 }
 
@@ -66,8 +76,10 @@ func newService(s3 *fakeS3, queue *fakeQueue, store *fakeStore) *JobService {
 
 func TestCreateJobBuildsContractMessage(t *testing.T) {
 	s3 := &fakeS3{}
-	queue := &fakeQueue{}
+	var calls []string
+	queue := &fakeQueue{calls: &calls}
 	store := newFakeStore()
+	store.calls = &calls
 	svc := newService(s3, queue, store)
 
 	result, err := svc.CreateJob(context.Background(), CreateJobInput{
@@ -90,6 +102,13 @@ func TestCreateJobBuildsContractMessage(t *testing.T) {
 		if upload.Method != "PUT" {
 			t.Errorf("upload method must be PUT, got %s", upload.Method)
 		}
+	}
+	wantKeys := []string{"jobs/" + result.JobID + "/inputs/a.txt", "jobs/" + result.JobID + "/inputs/b.txt"}
+	if !reflect.DeepEqual(s3.keys, wantKeys) {
+		t.Errorf("presigned keys = %v, want %v", s3.keys, wantKeys)
+	}
+	if !reflect.DeepEqual(calls, []string{"set", "enqueue"}) {
+		t.Errorf("remote call order = %v, want [set enqueue]", calls)
 	}
 
 	if len(queue.bodies) != 1 {
@@ -127,10 +146,12 @@ func TestCreateJobBuildsContractMessage(t *testing.T) {
 	if first["method"] != "GET" {
 		t.Errorf("download method must be GET: %v", first["method"])
 	}
+	if first["key"] != wantKeys[0] {
+		t.Errorf("download key = %v, want %s", first["key"], wantKeys[0])
+	}
 
-	// queued 상태가 SQS 발행 전에 기록되어야 한다
-	stored, err := store.Get(context.Background(), result.JobID)
-	if err != nil {
+	stored, found, err := store.Get(context.Background(), result.JobID)
+	if err != nil || !found {
 		t.Fatalf("queued status missing: %v", err)
 	}
 	var status map[string]any
@@ -174,5 +195,40 @@ func TestGetTaskCatalog(t *testing.T) {
 	}
 	if !strings.Contains(string(catalog), "wordcount") {
 		t.Errorf("catalog content unexpected: %s", catalog)
+	}
+}
+
+func TestCreateJobStoreFailureDoesNotEnqueue(t *testing.T) {
+	store := newFakeStore()
+	store.setErr = errors.New("store unavailable")
+	queue := &fakeQueue{}
+	svc := newService(&fakeS3{}, queue, store)
+
+	_, err := svc.CreateJob(context.Background(), CreateJobInput{TaskName: "wordcount"})
+	if !errors.Is(err, store.setErr) {
+		t.Fatalf("expected store error, got %v", err)
+	}
+	if len(queue.bodies) != 0 {
+		t.Fatal("job was enqueued without its initial status")
+	}
+}
+
+func TestGetTaskCatalogNotFound(t *testing.T) {
+	svc := newService(&fakeS3{}, &fakeQueue{}, newFakeStore())
+	if _, err := svc.GetTaskCatalog(context.Background()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestReadsPreserveStoreFailure(t *testing.T) {
+	store := newFakeStore()
+	store.getErr = errors.New("store unavailable")
+	svc := newService(&fakeS3{}, &fakeQueue{}, store)
+
+	if _, err := svc.GetJob(context.Background(), "missing"); !errors.Is(err, store.getErr) {
+		t.Errorf("GetJob error = %v, want store error", err)
+	}
+	if _, err := svc.GetTaskCatalog(context.Background()); !errors.Is(err, store.getErr) {
+		t.Errorf("GetTaskCatalog error = %v, want store error", err)
 	}
 }

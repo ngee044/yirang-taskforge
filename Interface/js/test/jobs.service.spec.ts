@@ -2,32 +2,39 @@
 import { ConfigService } from '@nestjs/config';
 
 import { EnqueueError, JobNotFoundError } from '../src/common/domain-errors';
+import { AppConfig } from '../src/config/configuration';
 import { RedisService } from '../src/infra/redis.service';
 import { S3Service } from '../src/infra/s3.service';
 import { SqsService } from '../src/infra/sqs.service';
 import { JobsService } from '../src/jobs/jobs.service';
 
 interface FakeInfra {
-  s3: S3Service;
-  sqs: SqsService;
-  redis: RedisService;
+  s3: Pick<S3Service, 'bucket' | 'presignPut'>;
+  sqs: Pick<SqsService, 'enqueue'>;
+  redis: Pick<RedisService, 'get' | 'set'>;
   sentBodies: string[];
   sentGroups: string[];
   stored: Map<string, string>;
+  calls: string[];
 }
 
-function makeService(options?: { enqueueFails?: boolean }): { service: JobsService } & FakeInfra {
+function makeService(options?: {
+  enqueueFails?: boolean;
+  storeFails?: boolean;
+}): { service: JobsService } & FakeInfra {
   const sentBodies: string[] = [];
   const sentGroups: string[] = [];
   const stored = new Map<string, string>();
+  const calls: string[] = [];
 
   const s3 = {
     bucket: 'test-bucket',
     presignPut: jest.fn((key: string) => Promise.resolve(`https://example.com/${key}`)),
-  } as unknown as S3Service;
+  };
 
   const sqs = {
     enqueue: jest.fn((body: string, group: string) => {
+      calls.push('enqueue');
       if (options?.enqueueFails) {
         return Promise.reject(new Error('sqs down'));
       }
@@ -35,33 +42,32 @@ function makeService(options?: { enqueueFails?: boolean }): { service: JobsServi
       sentGroups.push(group);
       return Promise.resolve();
     }),
-  } as unknown as SqsService;
+  };
 
   const redis = {
     get: jest.fn((key: string) => Promise.resolve(stored.get(key) ?? null)),
     set: jest.fn((key: string, value: string) => {
+      calls.push('set');
+      if (options?.storeFails) {
+        return Promise.reject(new Error('store unavailable'));
+      }
       stored.set(key, value);
       return Promise.resolve();
     }),
-  } as unknown as RedisService;
+  };
 
-  const config = {
-    get: jest.fn((key: string) => {
-      const values: Record<string, unknown> = {
-        redisTtlSec: 3600,
-        sqsMessageGroupId: 'request',
-      };
-      return values[key];
-    }),
-  } as unknown as ConfigService<never, true>;
+  const config = new ConfigService<AppConfig, true>({
+    redisTtlSec: 3600,
+    sqsMessageGroupId: 'request',
+  });
 
   const service = new JobsService(s3, sqs, redis, config);
-  return { service, s3, sqs, redis, sentBodies, sentGroups, stored };
+  return { service, s3, sqs, redis, sentBodies, sentGroups, stored, calls };
 }
 
 describe('JobsService', () => {
   it('builds the contract queue message and queued status', async () => {
-    const { service, sentBodies, sentGroups, stored } = makeService();
+    const { service, s3, sentBodies, sentGroups, stored, calls } = makeService();
 
     const result = await service.createJob({
       task_name: 'wordcount',
@@ -73,6 +79,9 @@ describe('JobsService', () => {
     expect(result.job_id).toBeTruthy();
     expect(result.upload_urls).toHaveLength(2);
     expect(result.upload_urls.every((upload) => upload.method === 'PUT')).toBe(true);
+    expect(s3.presignPut).toHaveBeenNthCalledWith(1, `jobs/${result.job_id}/inputs/a.txt`);
+    expect(s3.presignPut).toHaveBeenNthCalledWith(2, `jobs/${result.job_id}/inputs/b.txt`);
+    expect(calls).toEqual(['set', 'enqueue']);
 
     expect(sentBodies).toHaveLength(1);
     expect(sentGroups).toEqual(['request']);
@@ -113,6 +122,18 @@ describe('JobsService', () => {
   it('throws JobNotFoundError for missing jobs', async () => {
     const { service } = makeService();
 
-    await expect(service.getJob('missing')).rejects.toBeInstanceOf(JobNotFoundError);
+    await expect(service.getJob('07519548-6bcf-4a3e-9f2e-1c9c26b40f11')).rejects.toBeInstanceOf(
+      JobNotFoundError,
+    );
+  });
+
+  it('does not enqueue when the initial status write fails', async () => {
+    const { service, calls, sentBodies } = makeService({ storeFails: true });
+
+    await expect(service.createJob({ task_name: 'wordcount' })).rejects.toThrow(
+      'store unavailable',
+    );
+    expect(calls).toEqual(['set']);
+    expect(sentBodies).toEqual([]);
   });
 });
