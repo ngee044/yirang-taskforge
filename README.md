@@ -28,8 +28,8 @@ flowchart LR
     Client -->|"POST /api/v1/jobs → 202"| Interface
     Client -->|"PUT 입력파일 (presigned)"| S3
     Client -->|"GET /api/v1/jobs/{id} 폴링"| Interface
-    Interface -->|"queued 기록 → 발행"| SQS
-    Interface -->|조회| REDIS
+    Interface -->|"요청 발행"| SQS
+    Interface -->|"queued 기록 · 조회"| REDIS
     SQS -->|롱폴링 소비| WORKER
     S3 <-->|"입력 다운로드 / 결과 업로드"| WORKER
     WORKER --> TASKS
@@ -71,17 +71,17 @@ sequenceDiagram
     C->>S3: GET 결과 파일 (presigned)
 ```
 
-실패 경로: 처리 실패 → 파일 DLQ에 try_count 기록 → 3회까지 요청 큐 재발행 → 소진 시 `failed` 확정. 스키마 위반 메시지는 재시도 없이 폐기됩니다.
+실패 경로: 실행·파일 처리 실패 → 파일 DLQ에 try_count 기록 → 3회까지 요청 큐 재발행 → 소진 시 `failed` 확정. 스키마 위반과 화이트리스트 미등록 태스크는 재시도하지 않습니다.
 
 ## 구성 요소
 
 | 경로 | 스택 | 역할 |
 |---|---|---|
 | `Main/` | C++23, CppToolkit(서브모듈), aws-sdk-cpp, boost.process | SQS 소비 → 화이트리스트 태스크 실행 → S3/Redis 갱신 |
-| `Interface/golang/` | Go 1.22+, Gin, aws-sdk-go-v2, go-redis | REST API (:8080) |
+| `Interface/golang/` | Go 1.24+, Gin, aws-sdk-go-v2, go-redis | REST API (:8080) |
 | `Interface/python/` | Python 3.11+, FastAPI, boto3, redis-py | REST API (:8081) |
 | `Interface/js/` | Node.js 20+, NestJS, TS strict, @aws-sdk v3, ioredis | REST API (:8082) |
-| `docker/` | Ubuntu 24.04, LocalStack, Redis 7 | 전체 스택 Compose + E2E |
+| `docker/` | 워커: Ubuntu 24.04, API: 언어별 공식 이미지, LocalStack, Redis 7 | 전체 스택 Compose + E2E |
 | `docs/` | ISO 29148/42010/29119-3 | SRS·SAD·STP·RTM·API 계약·컨벤션 |
 
 ## 빠른 시작 (Docker)
@@ -101,7 +101,7 @@ docker compose up -d --build
 
 ## API 사용법
 
-세 인터페이스는 포트만 다르고 계약이 동일합니다 (`8080`=Go, `8081`=Python, `8082`=NestJS). 전체 계약은 [`docs/API.md`](docs/API.md) 참조.
+세 인터페이스는 같은 작업 접수·조회 흐름을 제공합니다 (`8080`=Go, `8081`=Python, `8082`=NestJS). 검증 오류의 HTTP 상태 등 구현별 차이를 포함한 전체 계약은 [`docs/API.md`](docs/API.md)를 참조하십시오.
 
 ```bash
 # 1. 실행 가능한 태스크 목록
@@ -129,7 +129,9 @@ curl -s "localhost:8080/api/v1/jobs/$JOB_ID" | jq -r '.data.result_download_url[
 ```
 queued ──> running ──> done
    ▲          │
-   └──(재시도 ≤3)──> failed
+   └─ 재시도 ─┤
+              └──> failed (소진 또는 복구 불가)
+queued ──> failed (화이트리스트 미등록)
 ```
 
 ## 로컬 개발 (Docker 없이)
@@ -167,8 +169,8 @@ SQS_REQUEST_QUEUE_URL=... AWS_ENDPOINT_URL=http://localhost:4566 npm start
 | 대상 | 명령 |
 |---|---|
 | C++ | `./build.sh` (컴파일 에러 0) |
-| Go | `gofmt -l . && go build ./... && go vet ./... && go test ./...` |
-| Python | `.venv/bin/ruff check . && .venv/bin/pytest` |
+| Go | `test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test -race ./...` |
+| Python | `.venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/pytest` |
 | JS | `npm run build && npm run lint && npm test` |
 | E2E | `docker/scripts/e2e_test.sh` |
 
@@ -178,7 +180,7 @@ SQS_REQUEST_QUEUE_URL=... AWS_ENDPOINT_URL=http://localhost:4566 npm start
 2. 워커 설정(`task_forge_worker_configurations.json`)의 `task_whitelist`에 등록
 3. 워커 재기동 → `GET /api/v1/tasks` 카탈로그에 자동 노출
 
-화이트리스트에 없는 태스크 요청은 재시도 소진 후 `failed`로 확정됩니다.
+화이트리스트에 없는 태스크 요청은 재시도 없이 `failed`로 확정됩니다.
 
 ## 문서
 
@@ -189,6 +191,10 @@ SQS_REQUEST_QUEUE_URL=... AWS_ENDPOINT_URL=http://localhost:4566 npm start
 | [`docs/SAD.md`](docs/SAD.md) | 아키텍처 기술서 + ADR (ISO/IEC/IEEE 42010) |
 | [`docs/STP.md`](docs/STP.md) | 테스트 계획/결과 (ISO/IEC/IEEE 29119-3) |
 | [`docs/RTM.md`](docs/RTM.md) | 요구사항 추적성 매트릭스 |
+| [`docs/project_analysis.md`](docs/project_analysis.md) | 코드 기준 분석과 컨셉·제한사항 |
+| [`docs/task_list.md`](docs/task_list.md) | 개선 태스크와 검증 상태 |
+| [`docs/VERIFICATION.md`](docs/VERIFICATION.md) | 현재 검증 결과와 미검증 범위 |
+| [`docs/module_usage_guide.md`](docs/module_usage_guide.md) | 체크아웃된 CppToolkit API와 Logger 사용법 |
 | [`docs/conventions/`](docs/conventions) | 언어별 코딩 규약 (C++/Go/Python/JS) |
 | [`docs/architecture/MSA_ARCHITECTURE.md`](docs/architecture/MSA_ARCHITECTURE.md) | MSA 원칙 SSOT |
 

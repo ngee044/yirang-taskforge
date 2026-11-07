@@ -1,10 +1,10 @@
 # Interface — 동일 REST 계약의 3개 언어 구현
 
-yirang-taskforge의 작업 접수/조회 API입니다. 세 구현은 **완전히 동일한 계약**(`docs/API.md`)을 노출하며, 어느 것을 사용해도 동작이 같습니다 (포트폴리오 목적의 다언어 구현).
+yirang-taskforge의 작업 접수/조회 API입니다. 세 구현은 [공통 계약](../docs/API.md)을 바탕으로 같은 작업 흐름을 제공합니다. 검증 오류 상태 코드와 선택 필드 처리의 구현별 차이는 계약 문서에 명시합니다.
 
 | 구현 | 스택 | 포트 | 검증 게이트 |
 |---|---|---|---|
-| [`golang/`](golang) | Go 1.22+ · Gin · aws-sdk-go-v2 · go-redis | 8080 | `gofmt` `go build` `go vet` `go test` |
+| [`golang/`](golang) | Go 1.24+ · Gin · aws-sdk-go-v2 · go-redis | 8080 | `gofmt` `go build` `go vet` `go test -race` |
 | [`python/`](python) | Python 3.11+ · FastAPI · boto3 · redis-py | 8081 | `ruff check` `pytest` |
 | [`js/`](js) | Node.js 20+ · NestJS · TypeScript strict · @aws-sdk v3 · ioredis | 8082 | `tsc` `eslint` `jest` |
 
@@ -18,7 +18,7 @@ yirang-taskforge의 작업 접수/조회 API입니다. 세 구현은 **완전히
 | `GET /healthz` | liveness |
 | `GET /readyz` | Redis/SQS/S3 점검 (3초 타임아웃) |
 
-응답 envelope: `{"success": bool, "data": {...}, "error": {"code","message"}}`
+성공 envelope: `{"success":true,"data":{...}}`. 실패 envelope: `{"success":false,"error":{"code":"...","message":"..."}}`.
 
 ## 공통 아키텍처 규칙
 
@@ -42,4 +42,4 @@ yirang-taskforge의 작업 접수/조회 API입니다. 세 구현은 **완전히
 | presign TTL | Go `S3_PRESIGN_TTL=10m` · Python/JS `S3_PRESIGN_TTL_SEC=600` | |
 | 상태 TTL | Go `REDIS_TTL=1h` · Python/JS `REDIS_TTL_SEC=3600` | |
 
-언어별 코딩 규약은 `docs/conventions/`를 따릅니다.
+언어별 코딩 규약은 [docs/conventions/](../docs/conventions/)를 따릅니다. 현재 검증 결과와 남은 차이는 [검증 보고서](../docs/VERIFICATION.md)를 참조하십시오.
